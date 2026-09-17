@@ -22,7 +22,16 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允許「我的夢想」存取相簿，讓你為夢想選擇代表圖片。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }
