@@ -8,6 +8,7 @@
     "date-fns": "^4.4.0",
     "expo": "~57.0.21",
     "expo-image-picker": "~57.0.17",
+    "expo-notifications": "~57.0.20",
     "expo-sqlite": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",

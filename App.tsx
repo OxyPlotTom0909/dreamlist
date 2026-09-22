@@ -1,10 +1,11 @@
 import { StatusBar } from 'expo-status-bar';
 import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 import * as ImagePicker from 'expo-image-picker';
+import * as Notifications from 'expo-notifications';
 import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 type TabKey = 'dreams' | 'finance' | 'calendar' | 'profile';
@@ -22,10 +23,16 @@ type TransactionKind = 'income' | 'expense';
 type TransactionCategory = { id: number; kind: TransactionKind; name: string };
 type CalendarTransaction = { id: number; kind: TransactionKind; category: string; amount: number; note: string; occurred_at: string };
 type AppSetting = { key: string; value: string };
+type Reminder = { id: number; item: string; title: string; body: string; day_of_month: number; hour: number; minute: number; notification_identifier: string };
+type ReminderInput = { id?: number; item: string; title: string; body: string; dayOfMonth: number; hour: number; minute: number };
 
 const DEFAULT_FIXED_INCOME_COLOR = '#A8DDB5';
 const DEFAULT_FIXED_EXPENSE_COLOR = '#AFCBFF';
 const MACARON_YELLOW = '#FFE8A3';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({ shouldPlaySound: true, shouldSetBadge: false, shouldShowBanner: true, shouldShowList: true }),
+});
 
 const databasePromise = openDatabaseAsync('my-dreams.db');
 const tabs: ReadonlyArray<{ key: TabKey; label: string; icon: string }> = [
@@ -52,6 +59,7 @@ async function database(): Promise<SQLiteDatabase> {
     CREATE TABLE IF NOT EXISTS transaction_categories (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('income','expense')), name TEXT NOT NULL, UNIQUE(kind, name));
     CREATE TABLE IF NOT EXISTS calendar_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('income','expense')), category TEXT NOT NULL, amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, day_of_month INTEGER NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL, notification_identifier TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS dreams (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0, monthly_allocation REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
   const categorySeed = await db.getFirstAsync<AppSetting>("SELECT key, value FROM app_settings WHERE key = 'categories_seeded'");
   if (!categorySeed) {
@@ -140,6 +148,7 @@ export default function App() {
   const [financialEntries, setFinancialEntries] = useState<ReadonlyArray<FinancialEntry>>([]);
   const [transactionCategories, setTransactionCategories] = useState<ReadonlyArray<TransactionCategory>>([]);
   const [calendarTransactions, setCalendarTransactions] = useState<ReadonlyArray<CalendarTransaction>>([]);
+  const [reminders, setReminders] = useState<ReadonlyArray<Reminder>>([]);
   const [fixedIncomeColor, setFixedIncomeColor] = useState(DEFAULT_FIXED_INCOME_COLOR);
   const [fixedExpenseColor, setFixedExpenseColor] = useState(DEFAULT_FIXED_EXPENSE_COLOR);
   const [displayName, setDisplayName] = useState('使用者');
@@ -152,7 +161,7 @@ export default function App() {
   const [dreamTargetDate, setDreamTargetDate] = useState('');
 
   const loadDreamDashboard = async (db: SQLiteDatabase): Promise<void> => {
-    const [incomeTotal, expenseTotal, storedDreams, storedEntries, storedProfile, storedCategories, storedTransactions, storedSettings] = await Promise.all([
+    const [incomeTotal, expenseTotal, storedDreams, storedEntries, storedProfile, storedCategories, storedTransactions, storedSettings, storedReminders] = await Promise.all([
       readAmountTotal(db, 'income'),
       readAmountTotal(db, 'expense'),
       db.getAllAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date FROM dreams ORDER BY created_at ASC'),
@@ -161,6 +170,7 @@ export default function App() {
       db.getAllAsync<TransactionCategory>('SELECT id, kind, name FROM transaction_categories ORDER BY id ASC'),
       db.getAllAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at FROM calendar_transactions ORDER BY occurred_at DESC, id DESC'),
       db.getAllAsync<AppSetting>('SELECT key, value FROM app_settings'),
+      db.getAllAsync<Reminder>('SELECT id, item, title, body, day_of_month, hour, minute, notification_identifier FROM reminders ORDER BY id ASC'),
     ]);
     setMonthlyIncome(incomeTotal);
     setMonthlyExpenses(expenseTotal);
@@ -172,6 +182,7 @@ export default function App() {
     setCalendarTransactions(storedTransactions);
     setFixedIncomeColor(storedSettings.find((setting) => setting.key === 'fixed_income_color')?.value ?? DEFAULT_FIXED_INCOME_COLOR);
     setFixedExpenseColor(storedSettings.find((setting) => setting.key === 'fixed_expense_color')?.value ?? DEFAULT_FIXED_EXPENSE_COLOR);
+    setReminders(storedReminders);
   };
 
   useEffect(() => {
@@ -246,49 +257,32 @@ export default function App() {
     catch { Alert.alert('設定尚未完成', '請再試一次。'); }
     finally { setSaving(false); }
   };
+  const deleteLocalData = async (): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      await db.withTransactionAsync(async (): Promise<void> => {
+        await db.runAsync('DELETE FROM financial_entries');
+        await db.runAsync('DELETE FROM financial_items');
+        await db.runAsync('DELETE FROM calendar_transactions');
+        await db.runAsync('DELETE FROM transaction_categories');
+        await db.runAsync('DELETE FROM dreams');
+        await db.runAsync('DELETE FROM app_settings');
+        await db.runAsync('DELETE FROM reminders');
+        await db.runAsync('DELETE FROM profile WHERE id = 1');
+      });
+      await Notifications.cancelAllScheduledNotificationsAsync();
+      setAssets(initialAssets); setLiabilities(initialLiabilities); setIncome(initialIncome); setExpenses(initialExpenses);
+      setMonthlyIncome(0); setMonthlyExpenses(0); setDreams([]); setFinancialEntries([]); setTransactionCategories([]); setCalendarTransactions([]); setReminders([]);
+      setDisplayName('使用者'); setAvatarUri(null); setStep('welcome'); setComplete(false);
+      return true;
+    } catch {
+      Alert.alert('刪除失敗', '請稍後再試一次。');
+      return false;
+    } finally { setSaving(false); }
+  };
   const resetTestData = (): void => {
-    Alert.alert('重設測試資料？', '這會刪除這個 App 的所有本機財務資料，且無法復原。', [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '重設',
-        style: 'destructive',
-        onPress: () => {
-          void (async (): Promise<void> => {
-            setSaving(true);
-            try {
-              const db = await database();
-              await db.withTransactionAsync(async (): Promise<void> => {
-                await db.runAsync('DELETE FROM financial_entries');
-                await db.runAsync('DELETE FROM financial_items');
-                await db.runAsync('DELETE FROM calendar_transactions');
-                await db.runAsync('DELETE FROM transaction_categories');
-                await db.runAsync('DELETE FROM dreams');
-                await db.runAsync('DELETE FROM app_settings');
-                await db.runAsync('DELETE FROM profile WHERE id = 1');
-              });
-              setAssets(initialAssets);
-              setLiabilities(initialLiabilities);
-              setIncome(initialIncome);
-              setExpenses(initialExpenses);
-              setMonthlyIncome(0);
-              setMonthlyExpenses(0);
-              setDreams([]);
-              setFinancialEntries([]);
-              setTransactionCategories([]);
-              setCalendarTransactions([]);
-              setDisplayName('使用者');
-              setAvatarUri(null);
-              setStep('welcome');
-              setComplete(false);
-            } catch {
-              Alert.alert('重設失敗', '請稍後再試一次。');
-            } finally {
-              setSaving(false);
-            }
-          })();
-        },
-      },
-    ]);
+    Alert.alert('刪除使用者資料？', '這會刪除 App 內的所有本機資料，且無法復原。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => { void deleteLocalData(); } }]);
   };
   const closeDreamForm = (): void => {
     setDreamTitle('');
@@ -461,13 +455,57 @@ export default function App() {
     catch { Alert.alert('類別尚未刪除', '請稍後再試一次。'); return false; }
     finally { setSaving(false); }
   };
+  const scheduleMonthlyReminder = async (input: ReminderInput): Promise<string | null> => {
+    if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('monthly-reminders', { name: '每月提醒', importance: Notifications.AndroidImportance.HIGH });
+    const currentPermission = await Notifications.getPermissionsAsync();
+    const permission = currentPermission.status === 'granted' ? currentPermission : await Notifications.requestPermissionsAsync();
+    if (permission.status !== 'granted') { Alert.alert('尚未允許通知', '請到手機系統設定中允許通知後再試一次。'); return null; }
+    return Notifications.scheduleNotificationAsync({
+      content: { title: input.title.trim(), body: input.body.trim(), data: { reminderItem: input.item }, sound: 'default' },
+      trigger: { channelId: Platform.OS === 'android' ? 'monthly-reminders' : undefined, day: input.dayOfMonth, hour: input.hour, minute: input.minute, type: Notifications.SchedulableTriggerInputTypes.MONTHLY },
+    });
+  };
+  const saveReminder = async (input: ReminderInput): Promise<boolean> => {
+    setSaving(true);
+    let newIdentifier: string | null = null;
+    try {
+      newIdentifier = await scheduleMonthlyReminder(input);
+      if (newIdentifier === null) return false;
+      const db = await database();
+      if (input.id === undefined) {
+        await db.runAsync('INSERT INTO reminders (item, title, body, day_of_month, hour, minute, notification_identifier) VALUES (?, ?, ?, ?, ?, ?, ?)', input.item, input.title.trim(), input.body.trim(), input.dayOfMonth, input.hour, input.minute, newIdentifier);
+      } else {
+        const previous = reminders.find((reminder) => reminder.id === input.id);
+        await db.runAsync('UPDATE reminders SET item = ?, title = ?, body = ?, day_of_month = ?, hour = ?, minute = ?, notification_identifier = ? WHERE id = ?', input.item, input.title.trim(), input.body.trim(), input.dayOfMonth, input.hour, input.minute, newIdentifier, input.id);
+        if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_identifier);
+      }
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      if (newIdentifier) await Notifications.cancelScheduledNotificationAsync(newIdentifier).catch(() => undefined);
+      Alert.alert('提醒尚未儲存', '請確認通知權限後再試一次。');
+      return false;
+    } finally { setSaving(false); }
+  };
+  const deleteReminder = async (id: number): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const reminder = reminders.find((item) => item.id === id);
+      if (reminder) await Notifications.cancelScheduledNotificationAsync(reminder.notification_identifier);
+      const db = await database();
+      await db.runAsync('DELETE FROM reminders WHERE id = ?', id);
+      await loadDreamDashboard(db);
+      return true;
+    } catch { Alert.alert('提醒尚未刪除', '請稍後再試一次。'); return false; }
+    finally { setSaving(false); }
+  };
 
   if (loading) return <View style={styles.center}><ActivityIndicator color="#087A50" size="large" /></View>;
   if (!complete) return <Onboarding step={step} assets={assets} liabilities={liabilities} income={income} expenses={expenses} saving={saving} onUpdate={update} onAdd={add} onNext={next} onSave={save} onFinish={finish} />;
   if (activeTab === 'dreams') return <DreamsHome dreams={dreams} isFormOpen={isDreamFormOpen} isSaving={saving} monthlyAvailable={Math.max(0, monthlyIncome - monthlyExpenses)} monthlyAllocated={dreams.reduce((sum, dream) => sum + dream.monthly_allocation, 0)} onCloseForm={closeDreamForm} onCreateDream={() => { setDreamTitle(''); setDreamTarget(''); setDreamAllocation(''); setDreamImageUri(null); setDreamTargetDate(''); setIsDreamFormOpen(true); }} onPickImage={() => { void pickDreamImage(); }} onSaveDream={createDream} onSetAllocation={(value) => setDreamAllocation(formatAmountInput(value))} onSetTarget={(value) => setDreamTarget(formatAmountInput(value))} onSetTargetDate={setDreamTargetDate} onSetTitle={setDreamTitle} setActiveTab={setActiveTab} dreamAllocation={dreamAllocation} dreamImageUri={dreamImageUri} dreamTarget={dreamTarget} dreamTargetDate={dreamTargetDate} dreamTitle={dreamTitle} />;
   if (activeTab === 'finance') return <FinanceHome entries={financialEntries} isSaving={saving} onAddEntry={createFinancialEntry} onUpdateEntry={updateFinancialEntry} setActiveTab={setActiveTab} />;
   if (activeTab === 'calendar') return <CalendarHome categories={transactionCategories} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} isSaving={saving} monthlyExpenses={monthlyExpenses} monthlyIncome={monthlyIncome} onAddTransaction={createCalendarTransaction} setActiveTab={setActiveTab} transactions={calendarTransactions} />;
-  return <ProfileHome avatarUri={avatarUri} categories={transactionCategories} displayName={displayName} dreams={dreams} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} monthlyIncome={monthlyIncome} monthlyExpenses={monthlyExpenses} saving={saving} onAddCategory={createTransactionCategory} onDeleteCategory={deleteTransactionCategory} onDeleteFixedEntry={deleteFixedEntry} onReset={resetTestData} onSaveFixedEntry={saveFixedEntry} onUpdateCategory={updateTransactionCategory} onUpdateFixedColor={updateFixedFinanceColor} onUpdateProfile={updateProfile} setActiveTab={setActiveTab} />;
+  return <ProfileHome avatarUri={avatarUri} categories={transactionCategories} displayName={displayName} dreams={dreams} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} monthlyIncome={monthlyIncome} monthlyExpenses={monthlyExpenses} reminders={reminders} saving={saving} onAddCategory={createTransactionCategory} onDeleteCategory={deleteTransactionCategory} onDeleteFixedEntry={deleteFixedEntry} onDeleteLocalData={deleteLocalData} onDeleteReminder={deleteReminder} onReset={resetTestData} onSaveFixedEntry={saveFixedEntry} onSaveReminder={saveReminder} onUpdateCategory={updateTransactionCategory} onUpdateFixedColor={updateFixedFinanceColor} onUpdateProfile={updateProfile} setActiveTab={setActiveTab} />;
 }
 
 function MainTabs({ activeTab, setActiveTab }: { activeTab: TabKey; setActiveTab: (tab: TabKey) => void }) {
@@ -553,18 +591,21 @@ function CalendarEntryForm({ categories, isOpen, isSaving, onCancel, onComplete 
   return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>新增收支項目</Text><Text style={styles.modalDescription}>紀錄會依現在時間加入今天的收支。</Text><Text style={styles.fieldLabel}>項目類型</Text><View style={styles.financeTypeSelector}><Pressable style={[styles.financeTypeOption, kind === 'income' && styles.financeTypeOptionActive]} onPress={() => changeKind('income')}><Text style={[styles.financeTypeOptionText, kind === 'income' && styles.financeTypeOptionTextActive]}>收入</Text></Pressable><Pressable style={[styles.financeTypeOption, kind === 'expense' && styles.financeTypeOptionActive]} onPress={() => changeKind('expense')}><Text style={[styles.financeTypeOptionText, kind === 'expense' && styles.financeTypeOptionTextActive]}>支出</Text></Pressable></View><Text style={styles.fieldLabel}>類別</Text><View style={styles.categoryPickerBox}><Picker selectedValue={category} onValueChange={(value: string) => setCategory(value)}>{options.map((option) => <Picker.Item key={option.id} label={option.name} value={option.name} />)}</Picker></View><Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="decimal-pad" placeholder="例如：150.50" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={transactionAmount} onChangeText={(value) => setTransactionAmount(formatDecimalInput(value))} /><Text style={styles.fieldLabel}>備註</Text><TextInput multiline placeholder="輸入這筆收支的重點內容" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={note} onChangeText={setNote} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
 }
 
-type ProfilePage = 'main' | 'fixed-income' | 'fixed-expense' | 'categories-income' | 'categories-expense';
+type ProfilePage = 'main' | 'fixed-income' | 'fixed-expense' | 'categories-income' | 'categories-expense' | 'reminders' | 'data' | 'privacy';
 type FixedEntryInput = { id?: number; kind: TransactionKind; category: string; amount: number; dayOfMonth: number; note: string; color: string };
-function ProfileHome({ avatarUri, categories, displayName, dreams, fixedEntries, fixedExpenseColor, fixedIncomeColor, monthlyIncome, monthlyExpenses, saving, onAddCategory, onDeleteCategory, onDeleteFixedEntry, onReset, onSaveFixedEntry, onUpdateCategory, onUpdateFixedColor, onUpdateProfile, setActiveTab }: { avatarUri: string | null; categories: ReadonlyArray<TransactionCategory>; displayName: string; dreams: ReadonlyArray<Dream>; fixedEntries: ReadonlyArray<FinancialEntry>; fixedExpenseColor: string; fixedIncomeColor: string; monthlyIncome: number; monthlyExpenses: number; saving: boolean; onAddCategory: (kind: TransactionKind, name: string) => Promise<boolean>; onDeleteCategory: (id: number) => Promise<boolean>; onDeleteFixedEntry: (id: number) => Promise<boolean>; onReset: () => void; onSaveFixedEntry: (entry: FixedEntryInput) => Promise<boolean>; onUpdateCategory: (id: number, name: string) => Promise<boolean>; onUpdateFixedColor: (kind: TransactionKind, color: string) => Promise<boolean>; onUpdateProfile: (name: string, avatar: string | null) => Promise<boolean>; setActiveTab: (tab: TabKey) => void }) {
+function ProfileHome({ avatarUri, categories, displayName, dreams, fixedEntries, fixedExpenseColor, fixedIncomeColor, monthlyIncome, monthlyExpenses, reminders, saving, onAddCategory, onDeleteCategory, onDeleteFixedEntry, onDeleteLocalData, onDeleteReminder, onReset, onSaveFixedEntry, onSaveReminder, onUpdateCategory, onUpdateFixedColor, onUpdateProfile, setActiveTab }: { avatarUri: string | null; categories: ReadonlyArray<TransactionCategory>; displayName: string; dreams: ReadonlyArray<Dream>; fixedEntries: ReadonlyArray<FinancialEntry>; fixedExpenseColor: string; fixedIncomeColor: string; monthlyIncome: number; monthlyExpenses: number; reminders: ReadonlyArray<Reminder>; saving: boolean; onAddCategory: (kind: TransactionKind, name: string) => Promise<boolean>; onDeleteCategory: (id: number) => Promise<boolean>; onDeleteFixedEntry: (id: number) => Promise<boolean>; onDeleteLocalData: () => Promise<boolean>; onDeleteReminder: (id: number) => Promise<boolean>; onReset: () => void; onSaveFixedEntry: (entry: FixedEntryInput) => Promise<boolean>; onSaveReminder: (input: ReminderInput) => Promise<boolean>; onUpdateCategory: (id: number, name: string) => Promise<boolean>; onUpdateFixedColor: (kind: TransactionKind, color: string) => Promise<boolean>; onUpdateProfile: (name: string, avatar: string | null) => Promise<boolean>; setActiveTab: (tab: TabKey) => void }) {
   const [page, setPage] = useState<ProfilePage>('main');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const initial = displayName.trim().slice(0, 1).toUpperCase() || '我';
   if (page === 'fixed-income' || page === 'fixed-expense') { const kind: TransactionKind = page === 'fixed-income' ? 'income' : 'expense'; return <FixedEntryListPage categories={categories.filter((item) => item.kind === kind)} color={kind === 'income' ? fixedIncomeColor : fixedExpenseColor} entries={fixedEntries.filter((entry) => entry.kind === kind)} isSaving={saving} kind={kind} onBack={() => setPage('main')} onColorChange={onUpdateFixedColor} onDelete={onDeleteFixedEntry} onSave={onSaveFixedEntry} />; }
   if (page === 'categories-income' || page === 'categories-expense') { const kind: TransactionKind = page === 'categories-income' ? 'income' : 'expense'; return <CategoryListPage categories={categories.filter((item) => item.kind === kind)} isSaving={saving} kind={kind} onAdd={onAddCategory} onBack={() => setPage('main')} onDelete={onDeleteCategory} onUpdate={onUpdateCategory} />; }
+  if (page === 'reminders') return <ReminderListPage isSaving={saving} onBack={() => setPage('main')} onDelete={onDeleteReminder} onSave={onSaveReminder} reminders={reminders} />;
+  if (page === 'data') return <DataSettingsPage isSaving={saving} onBack={() => setPage('main')} onDelete={onDeleteLocalData} />;
+  if (page === 'privacy') return <PrivacyAndGuidePage onBack={() => setPage('main')} />;
   const categoryNames = (kind: TransactionKind): string => categories.filter((category) => category.kind === kind).map((category) => category.name).join('、');
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><Text style={styles.pageTitle}>我的</Text><Pressable onPress={() => setIsSettingsOpen(true)} style={styles.settingsButton}><Text style={styles.headerActionText}>設定</Text></Pressable></View><View style={styles.profileHeader}>{avatarUri ? <Image source={{ uri: avatarUri }} style={styles.profileAvatarImage} /> : <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initial}</Text></View>}<View><Text style={styles.profileName}>{displayName}</Text><Text style={styles.pageSubtitle}>財務資料已完成設定</Text></View></View><View style={styles.dreamListHeader}><Text style={styles.sectionHeadingText}>夢想列表</Text><View style={styles.disabledDreamListButton}><Text style={styles.disabledDreamListText}>增加夢想清單（暫未開放）</Text></View></View><ScrollView horizontal contentContainerStyle={styles.profileDreamList} showsHorizontalScrollIndicator={false}>{dreams.map((dream) => <View key={dream.id} style={styles.profileDreamCard}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.profileDreamImage} /> : <View style={styles.profileDreamFallback}><Text>✦</Text></View>}<Text numberOfLines={1} style={styles.profileDreamTitle}>{dream.title}</Text><Text style={styles.profileDreamAmount}>{money(dream.target_amount)}</Text></View>)}</ScrollView><Text style={styles.dreamListLimit}>最多可建立 3 個夢想清單，此功能目前暫時關閉。</Text><Text style={styles.activityTitle}>財務設定</Text><ProfileRow icon="◎" title="固定收入" detail={`每月 ${money(monthlyIncome)}・${fixedEntries.filter((entry) => entry.kind === 'income').length} 個項目`} onPress={() => setPage('fixed-income')} /><ProfileRow icon="□" title="固定支出" detail={`每月 ${money(monthlyExpenses)}・${fixedEntries.filter((entry) => entry.kind === 'expense').length} 個項目`} onPress={() => setPage('fixed-expense')} /><ProfileRow icon="＋" title="收入類別" detail={categoryNames('income')} onPress={() => setPage('categories-income')} /><ProfileRow icon="＋" title="支出類別" detail={categoryNames('expense')} onPress={() => setPage('categories-expense')} /><ProfileRow icon="♧" title="提醒通知" detail="夢想進度與每月回顧" /><Text style={styles.activityTitle}>資料與支援</Text><ProfileRow icon="▣" title="本機資料" detail="目前資料保存在這台裝置" /><ProfileRow icon="?" title="隱私與使用說明" detail="了解資料的保存方式" /></ScrollView><MainTabs activeTab="profile" setActiveTab={setActiveTab} /><ProfileSettingsModal avatarUri={avatarUri} displayName={displayName} isOpen={isSettingsOpen} isSaving={saving} onCancel={() => setIsSettingsOpen(false)} onDelete={onReset} onSave={onUpdateProfile} /></View>;
+  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><Text style={styles.pageTitle}>我的</Text><Pressable onPress={() => setIsSettingsOpen(true)} style={styles.settingsButton}><Text style={styles.headerActionText}>設定</Text></Pressable></View><View style={styles.profileHeader}>{avatarUri ? <Image source={{ uri: avatarUri }} style={styles.profileAvatarImage} /> : <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initial}</Text></View>}<View><Text style={styles.profileName}>{displayName}</Text><Text style={styles.pageSubtitle}>財務資料已完成設定</Text></View></View><View style={styles.dreamListHeader}><Text style={styles.sectionHeadingText}>夢想列表</Text><View style={styles.disabledDreamListButton}><Text style={styles.disabledDreamListText}>增加夢想清單（暫未開放）</Text></View></View><ScrollView horizontal contentContainerStyle={styles.profileDreamList} showsHorizontalScrollIndicator={false}>{dreams.map((dream) => <View key={dream.id} style={styles.profileDreamCard}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.profileDreamImage} /> : <View style={styles.profileDreamFallback}><Text>✦</Text></View>}<Text numberOfLines={1} style={styles.profileDreamTitle}>{dream.title}</Text><Text style={styles.profileDreamAmount}>{money(dream.target_amount)}</Text></View>)}</ScrollView><Text style={styles.dreamListLimit}>最多可建立 3 個夢想清單，此功能目前暫時關閉。</Text><Text style={styles.activityTitle}>財務設定</Text><ProfileRow icon="◎" title="固定收入" detail={`每月 ${money(monthlyIncome)}・${fixedEntries.filter((entry) => entry.kind === 'income').length} 個項目`} onPress={() => setPage('fixed-income')} /><ProfileRow icon="□" title="固定支出" detail={`每月 ${money(monthlyExpenses)}・${fixedEntries.filter((entry) => entry.kind === 'expense').length} 個項目`} onPress={() => setPage('fixed-expense')} /><ProfileRow icon="＋" title="收入類別" detail={categoryNames('income')} onPress={() => setPage('categories-income')} /><ProfileRow icon="＋" title="支出類別" detail={categoryNames('expense')} onPress={() => setPage('categories-expense')} /><Text style={styles.activityTitle}>系統設定</Text><ProfileRow icon="♧" title="提醒通知" onPress={() => setPage('reminders')} /><ProfileRow icon="▣" title="資料" onPress={() => setPage('data')} /><ProfileRow icon="?" title="隱私與使用說明" onPress={() => setPage('privacy')} /></ScrollView><MainTabs activeTab="profile" setActiveTab={setActiveTab} /><ProfileSettingsModal avatarUri={avatarUri} displayName={displayName} isOpen={isSettingsOpen} isSaving={saving} onCancel={() => setIsSettingsOpen(false)} onDelete={onReset} onSave={onUpdateProfile} /></View>;
 }
-function ProfileRow({ color, icon, title, detail, onPress }: { color?: string; icon: string; title: string; detail: string; onPress?: () => void }) { return <Pressable disabled={!onPress} onPress={onPress} style={({ pressed }) => [styles.profileRow, pressed && styles.financeRowPressed]}><View style={styles.profileRowIcon}><Text style={styles.profileRowIconText}>{icon}</Text></View><View style={styles.profileRowCopy}><Text style={styles.profileRowTitle}>{title}</Text><Text numberOfLines={1} style={styles.profileRowDetail}>{detail}</Text></View>{color && <View style={[styles.profileColorSwatch, { backgroundColor: color }]} />}<Text style={styles.profileChevron}>›</Text></Pressable>; }
+function ProfileRow({ color, icon, title, detail, onPress }: { color?: string; icon: string; title: string; detail?: string; onPress?: () => void }) { return <Pressable disabled={!onPress} onPress={onPress} style={({ pressed }) => [styles.profileRow, pressed && styles.financeRowPressed]}><View style={styles.profileRowIcon}><Text style={styles.profileRowIconText}>{icon}</Text></View><View style={styles.profileRowCopy}><Text style={styles.profileRowTitle}>{title}</Text>{detail ? <Text numberOfLines={1} style={styles.profileRowDetail}>{detail}</Text> : null}</View>{color && <View style={[styles.profileColorSwatch, { backgroundColor: color }]} />}<Text style={styles.profileChevron}>›</Text></Pressable>; }
 const fixedEntryPalette = ['#FFE8A3', '#F8C8DC', '#A8DDB5', '#AFCBFF', '#D8C4F1', '#FFD0A8'];
 function ProfileSettingsModal({ avatarUri, displayName, isOpen, isSaving, onCancel, onDelete, onSave }: { avatarUri: string | null; displayName: string; isOpen: boolean; isSaving: boolean; onCancel: () => void; onDelete: () => void; onSave: (name: string, avatar: string | null) => Promise<boolean> }) {
   const [name, setName] = useState(displayName); const [avatar, setAvatar] = useState<string | null>(avatarUri);
@@ -572,6 +613,33 @@ function ProfileSettingsModal({ avatarUri, displayName, isOpen, isSaving, onCanc
   const pickAvatar = (): void => { void (async (): Promise<void> => { const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, aspect: [1, 1], base64: true, mediaTypes: ['images'], quality: 0.55 }); if (!result.canceled) { const picked = result.assets[0]; setAvatar(picked.base64 ? `data:image/jpeg;base64,${picked.base64}` : picked.uri); } })(); };
   return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>使用者設定</Text><Pressable onPress={pickAvatar} style={styles.avatarPicker}>{avatar ? <Image source={{ uri: avatar }} style={styles.avatarPickerImage} /> : <Text style={styles.avatarPickerIcon}>＋</Text>}<Text style={styles.avatarPickerText}>選擇大頭照</Text></Pressable><Text style={styles.fieldLabel}>使用者名稱</Text><TextInput style={styles.modalInput} value={name} onChangeText={setName} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={() => { void (async (): Promise<void> => { if (await onSave(name, avatar)) onCancel(); })(); }}><Text style={styles.buttonText}>儲存設定</Text></Pressable><Pressable style={styles.modalCancelButton} onPress={onCancel}><Text style={styles.modalCancelText}>取消</Text></Pressable><Pressable onPress={onDelete} style={styles.deleteDataButton}><Text style={styles.deleteDataText}>刪除使用者資料</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
 }
+function ReminderListPage({ isSaving, onBack, onDelete, onSave, reminders }: { isSaving: boolean; onBack: () => void; onDelete: (id: number) => Promise<boolean>; onSave: (input: ReminderInput) => Promise<boolean>; reminders: ReadonlyArray<Reminder> }) {
+  const [editing, setEditing] = useState<Reminder | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const requestDelete = (reminder: Reminder): void => Alert.alert(`刪除「${reminder.title}」？`, '刪除後，手機上的每月通知也會一併取消。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => { void onDelete(reminder.id); } }]);
+  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><SubpageHeader onBack={onBack} title="提醒通知" /><Text style={styles.pageSubtitle}>建立每月固定發送的裝置提醒。</Text>{reminders.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>尚未設定提醒</Text><Text style={styles.emptyDreamsText}>新增提醒後，App 會依照你設定的日期與時間定期通知。</Text></View> : reminders.map((reminder) => <Pressable key={reminder.id} onPress={() => { setEditing(reminder); setIsFormOpen(true); }} style={styles.reminderCard}><View style={styles.reminderCardHeader}><View style={styles.reminderItemBadge}><Text style={styles.reminderItemText}>{reminder.item}</Text></View><Text style={styles.reminderTime}>每月 {reminder.day_of_month} 日　{String(reminder.hour).padStart(2, '0')}:{String(reminder.minute).padStart(2, '0')}</Text></View><Text style={styles.reminderTitle}>{reminder.title}</Text><Text numberOfLines={2} style={styles.reminderBody}>{reminder.body}</Text><Pressable hitSlop={8} onPress={() => requestDelete(reminder)} style={styles.reminderDeleteButton}><Text style={styles.inlineDeleteText}>刪除</Text></Pressable></Pressable>)}<Pressable onPress={() => { setEditing(null); setIsFormOpen(true); }} style={styles.financeAddButton}><Text style={styles.financeAddButtonText}>＋ 新增通知</Text></Pressable></ScrollView><ReminderForm initialReminder={editing} isOpen={isFormOpen} isSaving={isSaving} onCancel={() => { setIsFormOpen(false); setEditing(null); }} onSave={onSave} /></View>;
+}
+function ReminderForm({ initialReminder, isOpen, isSaving, onCancel, onSave }: { initialReminder: Reminder | null; isOpen: boolean; isSaving: boolean; onCancel: () => void; onSave: (input: ReminderInput) => Promise<boolean> }) {
+  const reminderItems = ['夢想進度', '每月財務回顧', '固定收入', '固定支出', '自訂提醒'];
+  const [item, setItem] = useState(initialReminder?.item ?? reminderItems[0]);
+  const [title, setTitle] = useState(initialReminder?.title ?? '記得查看本月進度');
+  const [body, setBody] = useState(initialReminder?.body ?? '打開 App 看看你的夢想與財務進度吧！');
+  const [day, setDay] = useState(initialReminder?.day_of_month ?? 1);
+  const [hour, setHour] = useState(initialReminder?.hour ?? 9);
+  const [minute, setMinute] = useState(initialReminder?.minute ?? 0);
+  useEffect(() => { if (isOpen) { setItem(initialReminder?.item ?? reminderItems[0]); setTitle(initialReminder?.title ?? '記得查看本月進度'); setBody(initialReminder?.body ?? '打開 App 看看你的夢想與財務進度吧！'); setDay(initialReminder?.day_of_month ?? 1); setHour(initialReminder?.hour ?? 9); setMinute(initialReminder?.minute ?? 0); } }, [initialReminder, isOpen]);
+  const submit = (): void => { if (title.trim() === '' || body.trim() === '') { Alert.alert('請完成提醒資料', '標題與提醒內容不可空白。'); return; } void (async (): Promise<void> => { if (await onSave({ id: initialReminder?.id, item, title, body, dayOfMonth: day, hour, minute })) onCancel(); })(); };
+  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>{initialReminder ? '修改提醒' : '新增提醒'}</Text><Text style={styles.fieldLabel}>提醒項目</Text><View style={styles.categoryPickerBox}><Picker selectedValue={item} onValueChange={(value: string) => setItem(value)}>{reminderItems.map((value) => <Picker.Item key={value} label={value} value={value} />)}</Picker></View><Text style={styles.fieldLabel}>標題</Text><TextInput placeholder="例如：本月夢想進度" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={title} onChangeText={setTitle} /><Text style={styles.fieldLabel}>提醒內容</Text><TextInput multiline placeholder="輸入通知顯示的內容" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={body} onChangeText={setBody} /><Text style={styles.fieldLabel}>設定每月通知時間</Text><View style={styles.reminderPickerRow}><View style={styles.reminderPickerBox}><Picker selectedValue={day} onValueChange={(value: number) => setDay(value)}>{Array.from({ length: 28 }, (_, index) => <Picker.Item key={index + 1} label={`${index + 1} 日`} value={index + 1} />)}</Picker></View><View style={styles.reminderPickerBox}><Picker selectedValue={hour} onValueChange={(value: number) => setHour(value)}>{Array.from({ length: 24 }, (_, index) => <Picker.Item key={index} label={`${String(index).padStart(2, '0')} 時`} value={index} />)}</Picker></View><View style={styles.reminderPickerBox}><Picker selectedValue={minute} onValueChange={(value: number) => setMinute(value)}>{[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((value) => <Picker.Item key={value} label={`${String(value).padStart(2, '0')} 分`} value={value} />)}</Picker></View></View><Pressable disabled={isSaving} onPress={submit} style={[styles.modalPrimaryButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable onPress={onCancel} style={styles.modalCancelButton}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+}
+function DataSettingsPage({ isSaving, onBack, onDelete }: { isSaving: boolean; onBack: () => void; onDelete: () => Promise<boolean> }) {
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><SubpageHeader onBack={onBack} title="資料" /><Pressable disabled={isSaving} onPress={() => setIsConfirmOpen(true)} style={styles.localDataDeleteButton}><Text style={styles.localDataDeleteTitle}>刪除本機資料</Text></Pressable></ScrollView><Modal animationType="fade" transparent visible={isConfirmOpen} onRequestClose={() => { setIsConfirmOpen(false); onBack(); }}><View style={styles.confirmOverlay}><View style={styles.confirmCard}><View style={styles.confirmIcon}><Text style={styles.confirmIconText}>!</Text></View><Text style={styles.confirmTitle}>確認是否刪除？</Text><Text style={styles.confirmMessage}>所有夢想、財務、日曆、個人資料與通知設定都會從這台裝置永久刪除，且無法復原。</Text><Pressable disabled={isSaving} onPress={() => { void onDelete(); }} style={[styles.confirmDeleteButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>確認刪除</Text>}</Pressable><Pressable disabled={isSaving} onPress={() => { setIsConfirmOpen(false); onBack(); }} style={styles.confirmCancelButton}><Text style={styles.confirmCancelText}>取消</Text></Pressable></View></View></Modal></View>;
+}
+function PrivacyAndGuidePage({ onBack }: { onBack: () => void }) {
+  return <View style={styles.container}><StatusBar style="dark" /><View style={styles.privacyHeader}><SubpageHeader onBack={onBack} title="隱私與使用說明" /></View><ScrollView contentContainerStyle={styles.privacyContent} showsVerticalScrollIndicator={false} style={styles.privacyScroll}><Text style={styles.privacyUpdated}>最後更新：2026 年 9 月 23 日</Text><InfoSection title="隱私權說明"><InfoParagraph title="資料保存">目前的使用者名稱、大頭照、夢想、資產負債、收支、類別與提醒設定，只儲存在這台裝置的 App 資料庫中，不會主動上傳到伺服器或提供給第三方。</InfoParagraph><InfoParagraph title="照片權限">只有在你主動選擇大頭照或夢想圖片時，App 才會開啟 iOS 或 Android 的系統照片選擇器。App 只保存你選取的圖片，不會讀取整個相簿。</InfoParagraph><InfoParagraph title="通知權限">只有在你新增提醒並同意系統權限後，App 才會建立本機通知。提醒由裝置系統依設定時間發送，不會用於廣告追蹤。</InfoParagraph><InfoParagraph title="資料刪除">你可以從「我的 → 系統設定 → 資料」刪除全部本機資料。刪除後也會取消 App 已建立的通知排程。</InfoParagraph><InfoParagraph title="第三方與追蹤">目前版本不使用第三方廣告、不販售個人資料，也不進行跨 App 或跨網站追蹤。若未來加入雲端同步、分析或第三方服務，隱私權內容會在啟用前更新。</InfoParagraph><InfoParagraph title="平台權限管理">你可以隨時前往 iOS「設定」或 Android「設定」調整照片與通知權限。停用權限可能使相關功能無法使用，但不影響其他本機功能。</InfoParagraph></InfoSection><InfoSection title="App 操作說明"><InfoParagraph title="夢想">新增夢想名稱、圖片、目標金額、每月投入金額與預計日期，並查看達成進度。</InfoParagraph><InfoParagraph title="財務">管理個人權益與負債，查看資產負債結構。</InfoParagraph><InfoParagraph title="日曆">選擇日期查看或新增收入與支出，並顯示固定收入、固定支出的日期標記與每月總和。</InfoParagraph><InfoParagraph title="我的">設定個人資料、固定收支、收支類別與每月提醒通知，也可以查看本說明或刪除本機資料。</InfoParagraph><InfoParagraph title="重要提醒">App 提供的是個人整理與規劃工具，不構成投資、會計、稅務或法律建議。重要財務決策請諮詢合格專業人士。</InfoParagraph></InfoSection></ScrollView></View>;
+}
+function InfoSection({ children, title }: { children: ReactNode; title: string }) { return <View style={styles.infoSection}><Text style={styles.infoSectionTitle}>{title}</Text>{children}</View>; }
+function InfoParagraph({ children, title }: { children: ReactNode; title: string }) { return <View style={styles.infoParagraph}><Text style={styles.infoParagraphTitle}>{title}</Text><Text style={styles.infoParagraphBody}>{children}</Text></View>; }
 function FixedEntryListPage({ categories, color, entries, isSaving, kind, onBack, onColorChange, onDelete, onSave }: { categories: ReadonlyArray<TransactionCategory>; color: string; entries: ReadonlyArray<FinancialEntry>; isSaving: boolean; kind: TransactionKind; onBack: () => void; onColorChange: (kind: TransactionKind, color: string) => Promise<boolean>; onDelete: (id: number) => Promise<boolean>; onSave: (entry: FixedEntryInput) => Promise<boolean> }) {
   const [editing, setEditing] = useState<FinancialEntry | null>(null); const [isFormOpen, setIsFormOpen] = useState(false); const label = kind === 'income' ? '固定收入' : '固定支出';
   const requestDelete = (entry: FinancialEntry): void => Alert.alert(`刪除「${entry.category}」？`, '刪除後日曆也不會再顯示這個固定項目。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => { void onDelete(entry.id); } }]);
@@ -918,6 +986,36 @@ const styles = StyleSheet.create({
   categoryManageRow: { alignItems: 'center', borderBottomColor: '#EEEAE2', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: 58, paddingHorizontal: 14 },
   categoryManageActions: { alignItems: 'center', flexDirection: 'row', gap: 18 },
   editHint: { color: '#087A50', fontSize: 11, fontWeight: '700' },
+  reminderCard: { backgroundColor: '#FFFFFF', borderRadius: 16, marginTop: 12, padding: 15, position: 'relative' },
+  reminderCardHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingRight: 40 },
+  reminderItemBadge: { backgroundColor: '#EAF5ED', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 },
+  reminderItemText: { color: '#087A50', fontSize: 10, fontWeight: '800' },
+  reminderTime: { color: '#718096', fontSize: 10 },
+  reminderTitle: { color: '#132442', fontSize: 15, fontWeight: '800', marginTop: 12, paddingRight: 38 },
+  reminderBody: { color: '#617085', fontSize: 12, lineHeight: 18, marginTop: 5, paddingRight: 38 },
+  reminderDeleteButton: { position: 'absolute', right: 14, top: 16 },
+  reminderPickerRow: { flexDirection: 'row', gap: 7 },
+  reminderPickerBox: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, flex: 1, overflow: 'hidden' },
+  localDataDeleteButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E2AAA5', borderRadius: 16, borderWidth: 1, justifyContent: 'center', marginTop: 24, minHeight: 58 },
+  localDataDeleteTitle: { color: '#B94743', fontSize: 15, fontWeight: '800' },
+  confirmOverlay: { alignItems: 'center', backgroundColor: 'rgba(19,36,66,0.42)', flex: 1, justifyContent: 'center', padding: 24 },
+  confirmCard: { alignItems: 'center', backgroundColor: '#FCFAF5', borderRadius: 24, maxWidth: 380, padding: 24, width: '100%' },
+  confirmIcon: { alignItems: 'center', backgroundColor: '#F9E5E1', borderRadius: 25, height: 50, justifyContent: 'center', width: 50 },
+  confirmIconText: { color: '#B94743', fontSize: 24, fontWeight: '900' },
+  confirmTitle: { color: '#132442', fontSize: 20, fontWeight: '900', marginTop: 16 },
+  confirmMessage: { color: '#617085', fontSize: 13, lineHeight: 20, marginTop: 10, textAlign: 'center' },
+  confirmDeleteButton: { alignItems: 'center', backgroundColor: '#B94743', borderRadius: 13, justifyContent: 'center', marginTop: 22, minHeight: 50, width: '100%' },
+  confirmCancelButton: { alignItems: 'center', justifyContent: 'center', marginTop: 8, minHeight: 46, width: '100%' },
+  confirmCancelText: { color: '#526277', fontSize: 14, fontWeight: '700' },
+  privacyHeader: { backgroundColor: '#FCFAF5', paddingBottom: 4, paddingHorizontal: 20, paddingTop: Platform.OS === 'ios' ? 54 : (NativeStatusBar.currentHeight ?? 0) + 10, zIndex: 1 },
+  privacyScroll: { flex: 1 },
+  privacyContent: { paddingBottom: 40, paddingHorizontal: 20, paddingTop: 0 },
+  privacyUpdated: { color: '#8A96A5', fontSize: 10, marginTop: 10, textAlign: 'center' },
+  infoSection: { backgroundColor: '#FFFFFF', borderRadius: 18, marginTop: 18, padding: 16 },
+  infoSectionTitle: { color: '#132442', fontSize: 17, fontWeight: '900' },
+  infoParagraph: { borderTopColor: '#EEEAE2', borderTopWidth: StyleSheet.hairlineWidth, marginTop: 14, paddingTop: 14 },
+  infoParagraphTitle: { color: '#273952', fontSize: 13, fontWeight: '800' },
+  infoParagraphBody: { color: '#617085', fontSize: 12, lineHeight: 20, marginTop: 5 },
   colorPalette: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginBottom: 8, marginTop: 20 },
   colorOption: { alignItems: 'center', borderColor: 'transparent', borderRadius: 25, borderWidth: 3, height: 50, justifyContent: 'center', width: 50 },
   colorOptionSelected: { borderColor: '#132442' },
