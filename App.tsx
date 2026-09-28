@@ -4,8 +4,8 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Notifications from 'expo-notifications';
 import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
 import { Picker } from '@react-native-picker/picker';
-import { useEffect, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, Image, ImageBackground, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ActivityIndicator, Alert, Animated, Image, ImageBackground, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, ScrollView, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
 type TabKey = 'dreams' | 'finance' | 'calendar' | 'profile';
@@ -15,13 +15,15 @@ type Item = { id: string; category: string; amount: string };
 type RecordItem = { kind: EntryKind; category: string; amount: number };
 type ProfileRow = { onboarding_complete: number };
 type AmountRow = { total: number };
-type Dream = { id: number; title: string; target_amount: number; saved_amount: number; monthly_allocation: number; image_uri: string | null; target_date: string | null };
+type Dream = { id: number; title: string; target_amount: number; saved_amount: number; monthly_allocation: number; image_uri: string | null; target_date: string | null; completed_at: string | null; finance_adjusted: number; calendar_entry_deleted: number };
 type TableColumn = { name: string };
 type FinancialEntry = { id: number; kind: EntryKind; category: string; amount: number; day_of_month: number; note: string; color: string };
 type StoredProfile = { display_name: string; avatar_uri: string | null };
 type TransactionKind = 'income' | 'expense';
+type PaymentMethod = 'cash' | 'credit_card';
 type TransactionCategory = { id: number; kind: TransactionKind; name: string };
-type CalendarTransaction = { id: number; kind: TransactionKind; category: string; amount: number; note: string; occurred_at: string };
+type CalendarTransaction = { id: number; kind: TransactionKind; category: string; amount: number; note: string; occurred_at: string; payment_method: PaymentMethod | null; finance_adjusted: number; dream_id: number | null };
+type CalendarTransactionUpdate = { id: number; amount: number; note: string; occurredAt: string; paymentMethod: PaymentMethod | null };
 type AppSetting = { key: string; value: string };
 type Reminder = { id: number; item: string; title: string; body: string; day_of_month: number; hour: number; minute: number; notification_identifier: string };
 type ReminderInput = { id?: number; item: string; title: string; body: string; dayOfMonth: number; hour: number; minute: number };
@@ -57,10 +59,10 @@ async function database(): Promise<SQLiteDatabase> {
     CREATE TABLE IF NOT EXISTS financial_items (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, name TEXT NOT NULL, amount REAL NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS financial_entries (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('asset','liability','income','expense')), category TEXT NOT NULL, amount REAL NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
     CREATE TABLE IF NOT EXISTS transaction_categories (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('income','expense')), name TEXT NOT NULL, UNIQUE(kind, name));
-    CREATE TABLE IF NOT EXISTS calendar_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('income','expense')), category TEXT NOT NULL, amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS calendar_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('income','expense')), category TEXT NOT NULL, amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL, payment_method TEXT, finance_adjusted INTEGER NOT NULL DEFAULT 0, dream_id INTEGER);
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, day_of_month INTEGER NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL, notification_identifier TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS dreams (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0, monthly_allocation REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);`);
+    CREATE TABLE IF NOT EXISTS dreams (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0, monthly_allocation REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, finance_adjusted INTEGER NOT NULL DEFAULT 0, calendar_entry_deleted INTEGER NOT NULL DEFAULT 0);`);
   const categorySeed = await db.getFirstAsync<AppSetting>("SELECT key, value FROM app_settings WHERE key = 'categories_seeded'");
   if (!categorySeed) {
     await db.execAsync(`INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES ('income', '薪資'), ('income', '兼職'), ('expense', '餐費'), ('expense', '卡費'), ('expense', '夢想提撥');`);
@@ -71,6 +73,36 @@ async function database(): Promise<SQLiteDatabase> {
   const dreamColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(dreams)');
   if (!dreamColumns.some((column) => column.name === 'image_uri')) await db.execAsync('ALTER TABLE dreams ADD COLUMN image_uri TEXT');
   if (!dreamColumns.some((column) => column.name === 'target_date')) await db.execAsync('ALTER TABLE dreams ADD COLUMN target_date TEXT');
+  if (!dreamColumns.some((column) => column.name === 'completed_at')) await db.execAsync('ALTER TABLE dreams ADD COLUMN completed_at TEXT');
+  if (!dreamColumns.some((column) => column.name === 'finance_adjusted')) await db.execAsync('ALTER TABLE dreams ADD COLUMN finance_adjusted INTEGER NOT NULL DEFAULT 0');
+  if (!dreamColumns.some((column) => column.name === 'calendar_entry_deleted')) await db.execAsync('ALTER TABLE dreams ADD COLUMN calendar_entry_deleted INTEGER NOT NULL DEFAULT 0');
+  const transactionColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(calendar_transactions)');
+  if (!transactionColumns.some((column) => column.name === 'payment_method')) await db.execAsync('ALTER TABLE calendar_transactions ADD COLUMN payment_method TEXT');
+  if (!transactionColumns.some((column) => column.name === 'finance_adjusted')) await db.execAsync('ALTER TABLE calendar_transactions ADD COLUMN finance_adjusted INTEGER NOT NULL DEFAULT 0');
+  if (!transactionColumns.some((column) => column.name === 'dream_id')) await db.execAsync('ALTER TABLE calendar_transactions ADD COLUMN dream_id INTEGER');
+  await db.execAsync(`UPDATE calendar_transactions
+    SET finance_adjusted = 1,
+        dream_id = (SELECT dream.id FROM dreams AS dream WHERE dream.completed_at = calendar_transactions.occurred_at AND dream.title = calendar_transactions.note AND dream.target_amount = calendar_transactions.amount LIMIT 1)
+    WHERE EXISTS (
+      SELECT 1 FROM dreams AS dream
+      WHERE dream.completed_at = calendar_transactions.occurred_at
+        AND dream.title = calendar_transactions.note
+        AND dream.target_amount = calendar_transactions.amount
+        AND dream.finance_adjusted = 1
+    );
+    INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id)
+    SELECT 'expense', '夢想提撥', dream.target_amount, dream.title, dream.completed_at, 'cash', 0, dream.id
+    FROM dreams AS dream
+    WHERE dream.completed_at IS NOT NULL
+      AND dream.calendar_entry_deleted = 0
+      AND NOT EXISTS (
+        SELECT 1 FROM calendar_transactions AS transaction_record
+        WHERE transaction_record.kind = 'expense'
+          AND transaction_record.category = '夢想提撥'
+          AND transaction_record.amount = dream.target_amount
+          AND transaction_record.note = dream.title
+          AND transaction_record.occurred_at = dream.completed_at
+      );`);
   const profileColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(profile)');
   if (!profileColumns.some((column) => column.name === 'avatar_uri')) await db.execAsync('ALTER TABLE profile ADD COLUMN avatar_uri TEXT');
   const entryColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(financial_entries)');
@@ -82,6 +114,18 @@ async function database(): Promise<SQLiteDatabase> {
   if (!entryColumns.some((column) => column.name === 'color')) {
     await db.execAsync(`ALTER TABLE financial_entries ADD COLUMN color TEXT NOT NULL DEFAULT '${DEFAULT_FIXED_INCOME_COLOR}'`);
     await db.runAsync("UPDATE financial_entries SET color = ? WHERE kind = 'expense'", DEFAULT_FIXED_EXPENSE_COLOR);
+  }
+  const dreamFinanceBackfill = await db.getFirstAsync<AppSetting>("SELECT key, value FROM app_settings WHERE key = 'dream_expense_finance_backfill_v1'");
+  if (!dreamFinanceBackfill) {
+    const unsyncedDreams = await db.getAllAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE completed_at IS NOT NULL AND finance_adjusted = 0 AND calendar_entry_deleted = 0 ORDER BY id ASC');
+    await db.withTransactionAsync(async (): Promise<void> => {
+      for (const dream of unsyncedDreams) {
+        await adjustPaymentAccount(db, 'cash', dream.target_amount);
+        await db.runAsync('UPDATE dreams SET finance_adjusted = 1 WHERE id = ?', dream.id);
+        await db.runAsync("UPDATE calendar_transactions SET finance_adjusted = 1 WHERE kind = 'expense' AND category = '夢想提撥' AND amount = ? AND note = ? AND occurred_at = ?", dream.target_amount, dream.title, dream.completed_at);
+      }
+      await db.runAsync("INSERT INTO app_settings (key, value) VALUES ('dream_expense_finance_backfill_v1', '1')");
+    });
   }
   return db;
 }
@@ -100,6 +144,27 @@ function formatDecimalInput(value: string): string {
   const [integer = '', ...decimalParts] = cleaned.split('.');
   const normalizedInteger = integer.replace(/^0+(?=\d)/, '');
   return decimalParts.length === 0 ? normalizedInteger : `${normalizedInteger}.${decimalParts.join('').slice(0, 2)}`;
+}
+function normalizedFinanceName(value: string): string {
+  return value.toLocaleLowerCase().replace(/[\s_-]/g, '');
+}
+function isPaymentAccount(entry: FinancialEntry, paymentMethod: PaymentMethod): boolean {
+  const name = normalizedFinanceName(entry.category);
+  return paymentMethod === 'cash'
+    ? entry.kind === 'asset' && ['現金', '現款', 'cash'].some((keyword) => name.includes(keyword))
+    : entry.kind === 'liability' && ['信用卡', 'creditcard'].some((keyword) => name.includes(keyword));
+}
+async function adjustPaymentAccount(db: SQLiteDatabase, paymentMethod: PaymentMethod, expenseDelta: number): Promise<void> {
+  const financeEntries = await db.getAllAsync<FinancialEntry>('SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY id ASC');
+  const paymentAccount = financeEntries.find((entry) => isPaymentAccount(entry, paymentMethod));
+  if (paymentAccount) {
+    const nextAmount = paymentMethod === 'cash' ? paymentAccount.amount - expenseDelta : paymentAccount.amount + expenseDelta;
+    await db.runAsync('UPDATE financial_entries SET amount = ? WHERE id = ?', nextAmount, paymentAccount.id);
+    return;
+  }
+  if (expenseDelta > 0) {
+    await db.runAsync('INSERT INTO financial_entries (kind, category, amount) VALUES (?, ?, ?)', paymentMethod === 'cash' ? 'asset' : 'liability', paymentMethod === 'cash' ? '現金' : '信用卡', paymentMethod === 'cash' ? -expenseDelta : expenseDelta);
+  }
 }
 function preciseMoney(value: number): string {
   return `NT$${value.toLocaleString('zh-TW', { maximumFractionDigits: 2, minimumFractionDigits: value % 1 === 0 ? 0 : 2 })}`;
@@ -164,11 +229,11 @@ export default function App() {
     const [incomeTotal, expenseTotal, storedDreams, storedEntries, storedProfile, storedCategories, storedTransactions, storedSettings, storedReminders] = await Promise.all([
       readAmountTotal(db, 'income'),
       readAmountTotal(db, 'expense'),
-      db.getAllAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date FROM dreams ORDER BY created_at ASC'),
+      db.getAllAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams ORDER BY created_at ASC'),
       db.getAllAsync<FinancialEntry>('SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY id ASC'),
       db.getFirstAsync<StoredProfile>('SELECT display_name, avatar_uri FROM profile WHERE id = 1'),
       db.getAllAsync<TransactionCategory>('SELECT id, kind, name FROM transaction_categories ORDER BY id ASC'),
-      db.getAllAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at FROM calendar_transactions ORDER BY occurred_at DESC, id DESC'),
+      db.getAllAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions ORDER BY occurred_at DESC, id DESC'),
       db.getAllAsync<AppSetting>('SELECT key, value FROM app_settings'),
       db.getAllAsync<Reminder>('SELECT id, item, title, body, day_of_month, hour, minute, notification_identifier FROM reminders ORDER BY id ASC'),
     ]);
@@ -337,6 +402,27 @@ export default function App() {
       setSaving(false);
     }
   };
+  const executeDream = async (id: number): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      const dream = await db.getFirstAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE id = ?', id);
+      if (!dream || dream.completed_at !== null) return false;
+      const executedAt = new Date().toISOString();
+      await db.withTransactionAsync(async (): Promise<void> => {
+        await adjustPaymentAccount(db, 'cash', dream.target_amount);
+        await db.runAsync('INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 'expense', '夢想提撥', dream.target_amount, dream.title, executedAt, 'cash', 1, dream.id);
+        await db.runAsync('UPDATE dreams SET completed_at = ?, finance_adjusted = 1, calendar_entry_deleted = 0 WHERE id = ?', executedAt, id);
+      });
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert('夢想尚未執行', '請稍後再試一次。');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
   const createFinancialEntry = async (kind: 'asset' | 'liability', category: string, entryAmount: number): Promise<boolean> => {
     setSaving(true);
     try {
@@ -365,15 +451,58 @@ export default function App() {
       setSaving(false);
     }
   };
-  const createCalendarTransaction = async (kind: TransactionKind, category: string, transactionAmount: number, note: string, occurredAt: string): Promise<boolean> => {
+  const createCalendarTransaction = async (kind: TransactionKind, category: string, transactionAmount: number, note: string, occurredAt: string, paymentMethod: PaymentMethod | null): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      await db.runAsync('INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at) VALUES (?, ?, ?, ?, ?)', kind, category, transactionAmount, note.trim(), occurredAt);
+      await db.withTransactionAsync(async (): Promise<void> => {
+        if (kind === 'expense' && paymentMethod !== null) await adjustPaymentAccount(db, paymentMethod, transactionAmount);
+        await db.runAsync('INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted) VALUES (?, ?, ?, ?, ?, ?, ?)', kind, category, transactionAmount, note.trim(), occurredAt, kind === 'expense' ? paymentMethod : null, kind === 'expense' ? 1 : 0);
+      });
       await loadDreamDashboard(db);
       return true;
     } catch {
       Alert.alert('紀錄尚未新增', '請稍後再試一次。');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const updateCalendarTransaction = async (input: CalendarTransactionUpdate): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      const existing = await db.getFirstAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE id = ?', input.id);
+      if (!existing) return false;
+      await db.withTransactionAsync(async (): Promise<void> => {
+        if (existing.kind === 'expense' && existing.payment_method !== null && existing.finance_adjusted === 1) await adjustPaymentAccount(db, existing.payment_method, -existing.amount);
+        if (existing.kind === 'expense' && input.paymentMethod !== null) await adjustPaymentAccount(db, input.paymentMethod, input.amount);
+        await db.runAsync('UPDATE calendar_transactions SET amount = ?, note = ?, occurred_at = ?, payment_method = ?, finance_adjusted = ? WHERE id = ?', input.amount, input.note.trim(), input.occurredAt, existing.kind === 'expense' ? input.paymentMethod : null, existing.kind === 'expense' ? 1 : 0, input.id);
+      });
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert('支出內容尚未更新', '請稍後再試一次。');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const deleteCalendarTransaction = async (id: number): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      const existing = await db.getFirstAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE id = ?', id);
+      if (!existing) return false;
+      await db.withTransactionAsync(async (): Promise<void> => {
+        if (existing.kind === 'expense' && existing.payment_method !== null && existing.finance_adjusted === 1) await adjustPaymentAccount(db, existing.payment_method, -existing.amount);
+        await db.runAsync('DELETE FROM calendar_transactions WHERE id = ?', id);
+        if (existing.dream_id !== null) await db.runAsync('UPDATE dreams SET finance_adjusted = 0, calendar_entry_deleted = 1 WHERE id = ?', existing.dream_id);
+      });
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert('記錄尚未刪除', '請稍後再試一次。');
       return false;
     } finally {
       setSaving(false);
@@ -502,9 +631,9 @@ export default function App() {
 
   if (loading) return <View style={styles.center}><ActivityIndicator color="#087A50" size="large" /></View>;
   if (!complete) return <Onboarding step={step} assets={assets} liabilities={liabilities} income={income} expenses={expenses} saving={saving} onUpdate={update} onAdd={add} onNext={next} onSave={save} onFinish={finish} />;
-  if (activeTab === 'dreams') return <DreamsHome dreams={dreams} isFormOpen={isDreamFormOpen} isSaving={saving} monthlyAvailable={Math.max(0, monthlyIncome - monthlyExpenses)} monthlyAllocated={dreams.reduce((sum, dream) => sum + dream.monthly_allocation, 0)} onCloseForm={closeDreamForm} onCreateDream={() => { setDreamTitle(''); setDreamTarget(''); setDreamAllocation(''); setDreamImageUri(null); setDreamTargetDate(''); setIsDreamFormOpen(true); }} onPickImage={() => { void pickDreamImage(); }} onSaveDream={createDream} onSetAllocation={(value) => setDreamAllocation(formatAmountInput(value))} onSetTarget={(value) => setDreamTarget(formatAmountInput(value))} onSetTargetDate={setDreamTargetDate} onSetTitle={setDreamTitle} setActiveTab={setActiveTab} dreamAllocation={dreamAllocation} dreamImageUri={dreamImageUri} dreamTarget={dreamTarget} dreamTargetDate={dreamTargetDate} dreamTitle={dreamTitle} />;
+  if (activeTab === 'dreams') return <DreamsHome dreams={dreams} isFormOpen={isDreamFormOpen} isSaving={saving} resourceTotal={financialEntries.filter((entry) => entry.kind === 'asset').reduce((sum, entry) => sum + entry.amount, 0)} onCloseForm={closeDreamForm} onCreateDream={() => { setDreamTitle(''); setDreamTarget(''); setDreamAllocation(''); setDreamImageUri(null); setDreamTargetDate(''); setIsDreamFormOpen(true); }} onExecuteDream={executeDream} onPickImage={() => { void pickDreamImage(); }} onSaveDream={createDream} onSetAllocation={(value) => setDreamAllocation(formatAmountInput(value))} onSetTarget={(value) => setDreamTarget(formatAmountInput(value))} onSetTargetDate={setDreamTargetDate} onSetTitle={setDreamTitle} setActiveTab={setActiveTab} dreamAllocation={dreamAllocation} dreamImageUri={dreamImageUri} dreamTarget={dreamTarget} dreamTargetDate={dreamTargetDate} dreamTitle={dreamTitle} />;
   if (activeTab === 'finance') return <FinanceHome entries={financialEntries} isSaving={saving} onAddEntry={createFinancialEntry} onUpdateEntry={updateFinancialEntry} setActiveTab={setActiveTab} />;
-  if (activeTab === 'calendar') return <CalendarHome categories={transactionCategories} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} isSaving={saving} monthlyExpenses={monthlyExpenses} monthlyIncome={monthlyIncome} onAddTransaction={createCalendarTransaction} setActiveTab={setActiveTab} transactions={calendarTransactions} />;
+  if (activeTab === 'calendar') return <CalendarHome categories={transactionCategories} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} isSaving={saving} monthlyExpenses={monthlyExpenses} monthlyIncome={monthlyIncome} onAddTransaction={createCalendarTransaction} onDeleteTransaction={deleteCalendarTransaction} onUpdateTransaction={updateCalendarTransaction} setActiveTab={setActiveTab} transactions={calendarTransactions} />;
   return <ProfileHome avatarUri={avatarUri} categories={transactionCategories} displayName={displayName} dreams={dreams} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} monthlyIncome={monthlyIncome} monthlyExpenses={monthlyExpenses} reminders={reminders} saving={saving} onAddCategory={createTransactionCategory} onDeleteCategory={deleteTransactionCategory} onDeleteFixedEntry={deleteFixedEntry} onDeleteLocalData={deleteLocalData} onDeleteReminder={deleteReminder} onReset={resetTestData} onSaveFixedEntry={saveFixedEntry} onSaveReminder={saveReminder} onUpdateCategory={updateTransactionCategory} onUpdateFixedColor={updateFixedFinanceColor} onUpdateProfile={updateProfile} setActiveTab={setActiveTab} />;
 }
 
@@ -550,7 +679,7 @@ function FinanceEntryForm({ initialEntry, isOpen, isSaving, onCancel, onComplete
   return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}><Text style={styles.modalTitle}>{initialEntry ? '編輯財務項目' : '新增財務項目'}</Text><Text style={styles.modalDescription}>{initialEntry ? '修改後會立即更新資產負債表。' : '新增後會立即更新資產負債表。'}</Text><Text style={styles.fieldLabel}>類別</Text><View style={styles.financeTypeSelector}><Pressable accessibilityRole="radio" accessibilityState={{ checked: kind === 'asset' }} style={[styles.financeTypeOption, kind === 'asset' && styles.financeTypeOptionActive]} onPress={() => setKind('asset')}><Text style={[styles.financeTypeOptionText, kind === 'asset' && styles.financeTypeOptionTextActive]}>個人權益</Text></Pressable><Pressable accessibilityRole="radio" accessibilityState={{ checked: kind === 'liability' }} style={[styles.financeTypeOption, kind === 'liability' && styles.financeTypeOptionActive]} onPress={() => setKind('liability')}><Text style={[styles.financeTypeOptionText, kind === 'liability' && styles.financeTypeOptionTextActive]}>負債</Text></Pressable></View><Text style={styles.fieldLabel}>名稱</Text><TextInput autoFocus placeholder={kind === 'asset' ? '例如：銀行存款' : '例如：信用卡'} placeholderTextColor="#9AA5B4" returnKeyType="next" style={styles.modalInput} value={category} onChangeText={setCategory} /><Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="numeric" placeholder="例如：50,000" placeholderTextColor="#9AA5B4" returnKeyType="done" style={styles.modalInput} value={entryAmount} onChangeText={(value) => setEntryAmount(formatAmountInput(value))} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
 }
 
-function CalendarHome({ categories, fixedEntries, fixedExpenseColor, fixedIncomeColor, isSaving, monthlyExpenses, monthlyIncome, onAddTransaction, setActiveTab, transactions }: { categories: ReadonlyArray<TransactionCategory>; fixedEntries: ReadonlyArray<FinancialEntry>; fixedExpenseColor: string; fixedIncomeColor: string; isSaving: boolean; monthlyExpenses: number; monthlyIncome: number; onAddTransaction: (kind: TransactionKind, category: string, transactionAmount: number, note: string, occurredAt: string) => Promise<boolean>; setActiveTab: (tab: TabKey) => void; transactions: ReadonlyArray<CalendarTransaction> }) {
+function CalendarHome({ categories, fixedEntries, fixedExpenseColor, fixedIncomeColor, isSaving, monthlyExpenses, monthlyIncome, onAddTransaction, onDeleteTransaction, onUpdateTransaction, setActiveTab, transactions }: { categories: ReadonlyArray<TransactionCategory>; fixedEntries: ReadonlyArray<FinancialEntry>; fixedExpenseColor: string; fixedIncomeColor: string; isSaving: boolean; monthlyExpenses: number; monthlyIncome: number; onDeleteTransaction: (id: number) => Promise<boolean>; onAddTransaction: (kind: TransactionKind, category: string, transactionAmount: number, note: string, occurredAt: string, paymentMethod: PaymentMethod | null) => Promise<boolean>; onUpdateTransaction: (input: CalendarTransactionUpdate) => Promise<boolean>; setActiveTab: (tab: TabKey) => void; transactions: ReadonlyArray<CalendarTransaction> }) {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
@@ -559,6 +688,8 @@ function CalendarHome({ categories, fixedEntries, fixedExpenseColor, fixedIncome
   const [pendingMonth, setPendingMonth] = useState(selectedMonth);
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<CalendarTransaction | null>(null);
+  const [pendingDeleteTransaction, setPendingDeleteTransaction] = useState<CalendarTransaction | null>(null);
   const days = new Date(selectedYear, selectedMonth + 1, 0).getDate();
   const leading = new Date(selectedYear, selectedMonth, 1).getDay();
   const calendarCells: ReadonlyArray<number | null> = [...Array.from({ length: leading }, () => null), ...Array.from({ length: days }, (_, index) => index + 1)];
@@ -569,26 +700,51 @@ function CalendarHome({ categories, fixedEntries, fixedExpenseColor, fixedIncome
   const openMonthPicker = (): void => { setPendingYear(selectedYear); setPendingMonth(selectedMonth); setIsMonthPickerOpen(true); };
   const selectedDateLabel = `${selectedMonth + 1} 月 ${selectedDay} 日`;
   const selectedDate = new Date(selectedYear, selectedMonth, selectedDay, now.getHours(), now.getMinutes(), now.getSeconds());
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><Text style={styles.pageTitle}>收支日曆</Text><Pressable accessibilityRole="button" style={styles.monthSelectButton} onPress={openMonthPicker}><Text style={styles.monthSelectText}>{selectedYear} 年 {selectedMonth + 1} 月</Text><Text style={styles.monthSelectChevron}>⌄</Text></Pressable></View><View style={styles.calendarLegend}><LegendChip color="#087A50" label="收入" /><LegendChip color="#D76E62" label="支出" /><LegendChip color={fixedIncomeColor} label="固定收入" /><LegendChip color={fixedExpenseColor} label="固定支出" /></View><View style={styles.calendarCard}><View style={styles.weekRow}>{['日','一','二','三','四','五','六'].map((day) => <Text key={day} style={styles.weekText}>{day}</Text>)}</View><View style={styles.calendarGrid}>{calendarCells.map((day, index) => { const dailyTransactions = day === null ? [] : transactionsForDay(day); const incomeTotal = dailyTransactions.filter((transaction) => transaction.kind === 'income').reduce((sum, transaction) => sum + transaction.amount, 0); const expenseTotal = dailyTransactions.filter((transaction) => transaction.kind === 'expense').reduce((sum, transaction) => sum + transaction.amount, 0); const isToday = day === now.getDate() && selectedYear === now.getFullYear() && selectedMonth === now.getMonth(); const isSelected = day === selectedDay; const dailyFixedEntries = day === null ? [] : fixedEntries.filter((entry) => Math.min(entry.day_of_month, days) === day); return <Pressable disabled={day === null} key={`${day ?? 'empty'}-${index}`} onPress={() => { if (day !== null) setSelectedDay(day); }} style={[styles.calendarDay, styles.calendarDayWithTotals, isToday && styles.calendarToday, isSelected && styles.calendarSelected]}><Text style={[styles.calendarDayText, isToday && styles.calendarTodayText, isSelected && styles.calendarSelectedText]}>{day ?? ''}</Text>{incomeTotal > 0 && <Text numberOfLines={1} style={styles.calendarIncomeAmount}>+{compactAmount(incomeTotal)}</Text>}{expenseTotal > 0 && <Text numberOfLines={1} style={styles.calendarExpenseAmount}>−{compactAmount(expenseTotal)}</Text>}<View style={styles.fixedCalendarMarks}>{dailyFixedEntries.slice(0, 4).map((entry) => <View key={entry.id} style={[styles.fixedCalendarDot, { backgroundColor: entry.kind === 'income' ? fixedIncomeColor : fixedExpenseColor }]} />)}</View></Pressable>; })}</View></View><Text style={styles.activityTitle}>每月固定收支總和</Text><View style={styles.fixedFinanceGrid}><FixedFinanceCard amount={monthlyIncome} color={fixedIncomeColor} dateLabel={`${fixedEntries.filter((entry) => entry.kind === 'income').length} 個項目`} label="每月固定收入總和" /><FixedFinanceCard amount={monthlyExpenses} color={fixedExpenseColor} dateLabel={`${fixedEntries.filter((entry) => entry.kind === 'expense').length} 個項目`} label="每月固定支出總和" /></View><TransactionSection title={`本日收入記錄・${selectedDateLabel}`} transactions={selectedIncome} /><TransactionSection title={`本日支出記錄・${selectedDateLabel}`} transactions={selectedExpenses} /><Pressable accessibilityRole="button" style={styles.financeAddButton} onPress={() => setIsFormOpen(true)}><Text style={styles.financeAddButtonText}>＋ 新增項目</Text></Pressable></ScrollView><MainTabs activeTab="calendar" setActiveTab={setActiveTab} /><MonthPickerModal isOpen={isMonthPickerOpen} month={pendingMonth} onCancel={() => setIsMonthPickerOpen(false)} onConfirm={() => { setSelectedYear(pendingYear); setSelectedMonth(pendingMonth); setSelectedDay(pendingYear === now.getFullYear() && pendingMonth === now.getMonth() ? now.getDate() : 1); setIsMonthPickerOpen(false); }} onMonthChange={setPendingMonth} onYearChange={setPendingYear} year={pendingYear} /><CalendarEntryForm categories={categories} isOpen={isFormOpen} isSaving={isSaving} onCancel={() => setIsFormOpen(false)} onComplete={async (kind, category, transactionAmount, note) => { const succeeded = await onAddTransaction(kind, category, transactionAmount, note, selectedDate.toISOString()); if (succeeded) setIsFormOpen(false); return succeeded; }} /></View>;
+  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><Text style={styles.pageTitle}>收支日曆</Text><Pressable accessibilityRole="button" style={styles.monthSelectButton} onPress={openMonthPicker}><Text style={styles.monthSelectText}>{selectedYear} 年 {selectedMonth + 1} 月</Text><Text style={styles.monthSelectChevron}>⌄</Text></Pressable></View><View style={styles.calendarLegend}><LegendChip color="#087A50" label="收入" /><LegendChip color="#D76E62" label="支出" /><LegendChip color={fixedIncomeColor} label="固定收入" /><LegendChip color={fixedExpenseColor} label="固定支出" /></View><View style={styles.calendarCard}><View style={styles.weekRow}>{['日','一','二','三','四','五','六'].map((day) => <Text key={day} style={styles.weekText}>{day}</Text>)}</View><View style={styles.calendarGrid}>{calendarCells.map((day, index) => { const dailyTransactions = day === null ? [] : transactionsForDay(day); const incomeTotal = dailyTransactions.filter((transaction) => transaction.kind === 'income').reduce((sum, transaction) => sum + transaction.amount, 0); const expenseTotal = dailyTransactions.filter((transaction) => transaction.kind === 'expense').reduce((sum, transaction) => sum + transaction.amount, 0); const isToday = day === now.getDate() && selectedYear === now.getFullYear() && selectedMonth === now.getMonth(); const isSelected = day === selectedDay; const dailyFixedEntries = day === null ? [] : fixedEntries.filter((entry) => Math.min(entry.day_of_month, days) === day); return <Pressable disabled={day === null} key={`${day ?? 'empty'}-${index}`} onPress={() => { if (day !== null) setSelectedDay(day); }} style={[styles.calendarDay, styles.calendarDayWithTotals, isToday && styles.calendarToday, isSelected && styles.calendarSelected]}><Text style={[styles.calendarDayText, isToday && styles.calendarTodayText, isSelected && styles.calendarSelectedText]}>{day ?? ''}</Text>{incomeTotal > 0 && <Text numberOfLines={1} style={styles.calendarIncomeAmount}>+{compactAmount(incomeTotal)}</Text>}{expenseTotal > 0 && <Text numberOfLines={1} style={styles.calendarExpenseAmount}>−{compactAmount(expenseTotal)}</Text>}<View style={styles.fixedCalendarMarks}>{dailyFixedEntries.slice(0, 4).map((entry) => <View key={entry.id} style={[styles.fixedCalendarDot, { backgroundColor: entry.kind === 'income' ? fixedIncomeColor : fixedExpenseColor }]} />)}</View></Pressable>; })}</View></View><Text style={styles.activityTitle}>每月固定收支總和</Text><View style={styles.fixedFinanceGrid}><FixedFinanceCard amount={monthlyIncome} color={fixedIncomeColor} dateLabel={`${fixedEntries.filter((entry) => entry.kind === 'income').length} 個項目`} label="每月固定收入總和" /><FixedFinanceCard amount={monthlyExpenses} color={fixedExpenseColor} dateLabel={`${fixedEntries.filter((entry) => entry.kind === 'expense').length} 個項目`} label="每月固定支出總和" /></View><TransactionSection onDeleteRequest={setPendingDeleteTransaction} onSelect={setSelectedTransaction} title={`本日收入記錄・${selectedDateLabel}`} transactions={selectedIncome} /><TransactionSection onDeleteRequest={setPendingDeleteTransaction} onSelect={setSelectedTransaction} title={`本日支出記錄・${selectedDateLabel}`} transactions={selectedExpenses} /><Pressable accessibilityRole="button" style={styles.financeAddButton} onPress={() => setIsFormOpen(true)}><Text style={styles.financeAddButtonText}>＋ 新增項目</Text></Pressable></ScrollView><MainTabs activeTab="calendar" setActiveTab={setActiveTab} /><MonthPickerModal isOpen={isMonthPickerOpen} month={pendingMonth} onCancel={() => setIsMonthPickerOpen(false)} onConfirm={() => { setSelectedYear(pendingYear); setSelectedMonth(pendingMonth); setSelectedDay(pendingYear === now.getFullYear() && pendingMonth === now.getMonth() ? now.getDate() : 1); setIsMonthPickerOpen(false); }} onMonthChange={setPendingMonth} onYearChange={setPendingYear} year={pendingYear} /><CalendarEntryForm categories={categories} isOpen={isFormOpen} isSaving={isSaving} onCancel={() => setIsFormOpen(false)} onComplete={async (kind, category, transactionAmount, note, paymentMethod) => { const succeeded = await onAddTransaction(kind, category, transactionAmount, note, selectedDate.toISOString(), paymentMethod); if (succeeded) setIsFormOpen(false); return succeeded; }} /><DeleteTransactionModal isOpen={pendingDeleteTransaction !== null} isSaving={isSaving} onCancel={() => setPendingDeleteTransaction(null)} onConfirm={() => { if (pendingDeleteTransaction) { void (async (): Promise<void> => { if (await onDeleteTransaction(pendingDeleteTransaction.id)) setPendingDeleteTransaction(null); })(); } }} /><TransactionDetailModal isOpen={selectedTransaction !== null} isSaving={isSaving} onCancel={() => setSelectedTransaction(null)} onSave={async (input) => { const succeeded = await onUpdateTransaction(input); if (succeeded) { const updated = new Date(input.occurredAt); setSelectedYear(updated.getFullYear()); setSelectedMonth(updated.getMonth()); setSelectedDay(updated.getDate()); setSelectedTransaction(null); } return succeeded; }} transaction={selectedTransaction} /></View>;
 }
 function FixedFinanceCard({ amount: cardAmount, color, dateLabel, label }: { amount: number; color: string; dateLabel: string; label: string }) { return <View style={[styles.fixedFinanceCard, { borderTopColor: color }]}><View style={styles.fixedFinanceCardHeader}><View style={[styles.fixedFinanceSwatch, { backgroundColor: color }]} /><Text style={styles.fixedFinanceLabel}>{label}</Text></View><Text style={styles.fixedFinanceAmount}>{preciseMoney(cardAmount)}</Text><Text style={styles.fixedFinanceDate}>{dateLabel}</Text></View>; }
 function compactAmount(value: number): string { return value >= 10000 ? `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k` : value.toLocaleString('zh-TW', { maximumFractionDigits: 1 }); }
 function LegendChip({ color, label }: { color: string; label: string }) { return <View style={styles.legendChip}><View style={[styles.legendDot, { backgroundColor: color }]} /><Text style={styles.legendChipText}>{label}</Text></View>; }
-function TransactionSection({ title, transactions }: { title: string; transactions: ReadonlyArray<CalendarTransaction> }) { return <><Text style={styles.activityTitle}>{title}</Text><View style={styles.transactionList}>{transactions.length === 0 ? <Text style={styles.emptyTransactionText}>這一天還沒有紀錄</Text> : transactions.map((transaction) => <View key={transaction.id} style={styles.transactionRow}><View style={[styles.transactionKindDot, { backgroundColor: transaction.kind === 'income' ? '#087A50' : '#D76E62' }]} /><View style={styles.transactionCopy}><Text style={styles.transactionCategory}>{transaction.category}</Text><Text numberOfLines={1} style={styles.transactionNote}>{transaction.note || '沒有備註'}・{new Date(transaction.occurred_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</Text></View><Text style={[styles.transactionAmount, { color: transaction.kind === 'income' ? '#087A50' : '#B94743' }]}>{transaction.kind === 'income' ? '+' : '−'}{preciseMoney(transaction.amount)}</Text></View>)}</View></>; }
+function TransactionSection({ onDeleteRequest, onSelect, title, transactions }: { onDeleteRequest: (transaction: CalendarTransaction) => void; onSelect: (transaction: CalendarTransaction) => void; title: string; transactions: ReadonlyArray<CalendarTransaction> }) { return <><Text style={styles.activityTitle}>{title}</Text><View style={styles.transactionList}>{transactions.length === 0 ? <Text style={styles.emptyTransactionText}>這一天還沒有紀錄</Text> : transactions.map((transaction) => <SwipeableTransactionRow key={transaction.id} onDelete={() => onDeleteRequest(transaction)} onPress={() => onSelect(transaction)} transaction={transaction} />)}</View></>; }
+function SwipeableTransactionRow({ onDelete, onPress, transaction }: { onDelete: () => void; onPress: () => void; transaction: CalendarTransaction }) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const settle = (open: boolean): void => { Animated.spring(translateX, { friction: 8, tension: 90, toValue: open ? -76 : 0, useNativeDriver: true }).start(); };
+  const panResponder = useRef(PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
+    onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
+    onPanResponderTerminate: () => settle(false),
+  })).current;
+  return <View style={styles.swipeRow}><Pressable accessibilityLabel="刪除這筆記錄" onPress={onDelete} style={styles.swipeDeleteAction}><Text style={styles.swipeDeleteIcon}>🗑️</Text></Pressable><Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}><Pressable accessibilityHint="點擊查看詳情，向左滑動可以刪除" accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.transactionRow, styles.swipeRowForeground, pressed && styles.financeRowPressed]}><View style={[styles.transactionKindDot, { backgroundColor: transaction.kind === 'income' ? '#087A50' : '#D76E62' }]} /><View style={styles.transactionCopy}><Text style={styles.transactionCategory}>{transaction.category}</Text><Text numberOfLines={1} style={styles.transactionNote}>{transaction.kind === 'expense' && transaction.payment_method ? `${transaction.payment_method === 'cash' ? '現金' : '信用卡'}・` : ''}{transaction.note || '沒有備註'}・{new Date(transaction.occurred_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</Text></View><Text style={[styles.transactionAmount, { color: transaction.kind === 'income' ? '#087A50' : '#B94743' }]}>{transaction.kind === 'income' ? '+' : '−'}{preciseMoney(transaction.amount)}</Text></Pressable></Animated.View></View>;
+}
+function DeleteTransactionModal({ isOpen, isSaving, onCancel, onConfirm }: { isOpen: boolean; isSaving: boolean; onCancel: () => void; onConfirm: () => void }) {
+  return <Modal animationType="fade" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.deleteConfirmOverlay}><View style={styles.deleteConfirmCard}><View style={styles.deleteConfirmIcon}><Text style={styles.deleteConfirmIconText}>🗑️</Text></View><Text style={styles.deleteConfirmTitle}>你將刪除這筆資料</Text><Text style={styles.deleteConfirmDescription}>刪除後無法復原，相關的財務金額也會同步調整。</Text><View style={styles.deleteConfirmActions}><Pressable disabled={isSaving} onPress={onCancel} style={styles.deleteConfirmCancelButton}><Text style={styles.deleteConfirmCancelText}>取消</Text></Pressable><Pressable disabled={isSaving} onPress={onConfirm} style={[styles.deleteConfirmDeleteButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.deleteConfirmDeleteText}>確定</Text>}</Pressable></View></View></View></Modal>;
+}
+function TransactionDetailModal({ isOpen, isSaving, onCancel, onSave, transaction }: { isOpen: boolean; isSaving: boolean; onCancel: () => void; onSave: (input: CalendarTransactionUpdate) => Promise<boolean>; transaction: CalendarTransaction | null }) {
+  const [occurredAt, setOccurredAt] = useState(new Date());
+  const [editedAmount, setEditedAmount] = useState('');
+  const [editedNote, setEditedNote] = useState('');
+  const [editedPaymentMethod, setEditedPaymentMethod] = useState<PaymentMethod>('cash');
+  useEffect(() => { if (transaction) { setOccurredAt(new Date(transaction.occurred_at)); setEditedAmount(formatDecimalInput(String(transaction.amount))); setEditedNote(transaction.note); setEditedPaymentMethod(transaction.payment_method ?? 'cash'); } }, [transaction]);
+  if (transaction === null) return null;
+  const save = (): void => { const parsedAmount = amount(editedAmount); if (parsedAmount === null || parsedAmount === 0) { Alert.alert('請輸入正確金額', '金額必須大於 0。'); return; } void onSave({ id: transaction.id, amount: parsedAmount, note: editedNote, occurredAt: occurredAt.toISOString(), paymentMethod: transaction.kind === 'expense' ? editedPaymentMethod : null }); };
+  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}><Text style={styles.modalTitle}>{transaction.kind === 'income' ? '收入詳細內容' : '支出詳細內容'}</Text><View style={styles.transactionDetailCard}><View style={styles.transactionDetailRow}><Text style={styles.transactionDetailLabel}>類別</Text><Text style={styles.transactionDetailValue}>{transaction.category}</Text></View></View><Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="decimal-pad" placeholder="輸入金額" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={editedAmount} onChangeText={(value) => setEditedAmount(formatDecimalInput(value))} />{transaction.kind === 'expense' && <><Text style={styles.fieldLabel}>支出方式</Text><View style={styles.financeTypeSelector}><Pressable accessibilityRole="radio" accessibilityState={{ checked: editedPaymentMethod === 'cash' }} style={[styles.financeTypeOption, editedPaymentMethod === 'cash' && styles.financeTypeOptionActive]} onPress={() => setEditedPaymentMethod('cash')}><Text style={[styles.financeTypeOptionText, editedPaymentMethod === 'cash' && styles.financeTypeOptionTextActive]}>現金</Text></Pressable><Pressable accessibilityRole="radio" accessibilityState={{ checked: editedPaymentMethod === 'credit_card' }} style={[styles.financeTypeOption, editedPaymentMethod === 'credit_card' && styles.financeTypeOptionActive]} onPress={() => setEditedPaymentMethod('credit_card')}><Text style={[styles.financeTypeOptionText, editedPaymentMethod === 'credit_card' && styles.financeTypeOptionTextActive]}>信用卡</Text></Pressable></View></>}<Text style={styles.fieldLabel}>備註</Text><TextInput multiline placeholder="輸入備註" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={editedNote} onChangeText={setEditedNote} /><Text style={styles.fieldLabel}>日期</Text><View style={styles.transactionPickerBox}><DateTimePicker display="spinner" locale="zh-TW" mode="date" onValueChange={(_event, value) => { const next = new Date(occurredAt); next.setFullYear(value.getFullYear(), value.getMonth(), value.getDate()); setOccurredAt(next); }} value={occurredAt} /></View><Text style={styles.fieldLabel}>時間</Text><View style={styles.transactionPickerBox}><DateTimePicker display="spinner" locale="zh-TW" mode="time" onValueChange={(_event, value) => { const next = new Date(occurredAt); next.setHours(value.getHours(), value.getMinutes(), 0, 0); setOccurredAt(next); }} value={occurredAt} /></View><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={save}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>儲存變更</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={onCancel}><Text style={styles.modalCancelText}>關閉</Text></Pressable></ScrollView></View></View></Modal>;
+}
 function MonthPickerModal({ isOpen, month, onCancel, onConfirm, onMonthChange, onYearChange, year }: { isOpen: boolean; month: number; onCancel: () => void; onConfirm: () => void; onMonthChange: (month: number) => void; onYearChange: (year: number) => void; year: number }) {
   const years = Array.from({ length: 131 }, (_, index) => 1970 + index);
   return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.modalOverlay}><View style={styles.pickerSheet}><Text style={styles.modalTitle}>選擇年月</Text><View style={styles.yearMonthPickers}><Picker selectedValue={year} style={styles.yearMonthPicker} onValueChange={(value: number) => onYearChange(value)}>{years.map((value) => <Picker.Item key={value} label={`${value} 年`} value={value} />)}</Picker><Picker selectedValue={month} style={styles.yearMonthPicker} onValueChange={(value: number) => onMonthChange(value)}>{Array.from({ length: 12 }, (_, index) => <Picker.Item key={index} label={`${index + 1} 月`} value={index} />)}</Picker></View><View style={styles.datePickerActions}><Pressable style={styles.datePickerCancel} onPress={onCancel}><Text style={styles.datePickerCancelText}>取消</Text></Pressable><Pressable style={styles.datePickerConfirm} onPress={onConfirm}><Text style={styles.datePickerConfirmText}>完成</Text></Pressable></View></View></View></Modal>;
 }
-function CalendarEntryForm({ categories, isOpen, isSaving, onCancel, onComplete }: { categories: ReadonlyArray<TransactionCategory>; isOpen: boolean; isSaving: boolean; onCancel: () => void; onComplete: (kind: TransactionKind, category: string, transactionAmount: number, note: string) => Promise<boolean> }) {
+function CalendarEntryForm({ categories, isOpen, isSaving, onCancel, onComplete }: { categories: ReadonlyArray<TransactionCategory>; isOpen: boolean; isSaving: boolean; onCancel: () => void; onComplete: (kind: TransactionKind, category: string, transactionAmount: number, note: string, paymentMethod: PaymentMethod | null) => Promise<boolean> }) {
   const [kind, setKind] = useState<TransactionKind>('income');
   const options = categories.filter((category) => category.kind === kind);
   const [category, setCategory] = useState('薪資');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [transactionAmount, setTransactionAmount] = useState('');
   const [note, setNote] = useState('');
   const changeKind = (nextKind: TransactionKind): void => { setKind(nextKind); const firstCategory = categories.find((item) => item.kind === nextKind); setCategory(firstCategory?.name ?? ''); };
-  const close = (): void => { setKind('income'); setCategory('薪資'); setTransactionAmount(''); setNote(''); onCancel(); };
-  const submit = (): void => { const parsedAmount = amount(transactionAmount); if (category === '' || parsedAmount === null || parsedAmount === 0) { Alert.alert('請完成收支資料', '請選擇類別並輸入大於 0 的金額。'); return; } void (async (): Promise<void> => { const succeeded = await onComplete(kind, category, parsedAmount, note); if (succeeded) close(); })(); };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>新增收支項目</Text><Text style={styles.modalDescription}>紀錄會依現在時間加入今天的收支。</Text><Text style={styles.fieldLabel}>項目類型</Text><View style={styles.financeTypeSelector}><Pressable style={[styles.financeTypeOption, kind === 'income' && styles.financeTypeOptionActive]} onPress={() => changeKind('income')}><Text style={[styles.financeTypeOptionText, kind === 'income' && styles.financeTypeOptionTextActive]}>收入</Text></Pressable><Pressable style={[styles.financeTypeOption, kind === 'expense' && styles.financeTypeOptionActive]} onPress={() => changeKind('expense')}><Text style={[styles.financeTypeOptionText, kind === 'expense' && styles.financeTypeOptionTextActive]}>支出</Text></Pressable></View><Text style={styles.fieldLabel}>類別</Text><View style={styles.categoryPickerBox}><Picker selectedValue={category} onValueChange={(value: string) => setCategory(value)}>{options.map((option) => <Picker.Item key={option.id} label={option.name} value={option.name} />)}</Picker></View><Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="decimal-pad" placeholder="例如：150.50" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={transactionAmount} onChangeText={(value) => setTransactionAmount(formatDecimalInput(value))} /><Text style={styles.fieldLabel}>備註</Text><TextInput multiline placeholder="輸入這筆收支的重點內容" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={note} onChangeText={setNote} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  const close = (): void => { setKind('income'); setCategory('薪資'); setPaymentMethod('cash'); setTransactionAmount(''); setNote(''); onCancel(); };
+  const submit = (): void => { const parsedAmount = amount(transactionAmount); if (category === '' || parsedAmount === null || parsedAmount === 0) { Alert.alert('請完成收支資料', '請選擇類別並輸入大於 0 的金額。'); return; } void (async (): Promise<void> => { const succeeded = await onComplete(kind, category, parsedAmount, note, kind === 'expense' ? paymentMethod : null); if (succeeded) close(); })(); };
+  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>新增收支項目</Text><Text style={styles.modalDescription}>紀錄會依現在時間加入今天的收支。</Text><Text style={styles.fieldLabel}>項目類型</Text><View style={styles.financeTypeSelector}><Pressable style={[styles.financeTypeOption, kind === 'income' && styles.financeTypeOptionActive]} onPress={() => changeKind('income')}><Text style={[styles.financeTypeOptionText, kind === 'income' && styles.financeTypeOptionTextActive]}>收入</Text></Pressable><Pressable style={[styles.financeTypeOption, kind === 'expense' && styles.financeTypeOptionActive]} onPress={() => changeKind('expense')}><Text style={[styles.financeTypeOptionText, kind === 'expense' && styles.financeTypeOptionTextActive]}>支出</Text></Pressable></View><Text style={styles.fieldLabel}>類別</Text><View style={styles.categoryPickerBox}><Picker selectedValue={category} onValueChange={(value: string) => setCategory(value)}>{options.map((option) => <Picker.Item key={option.id} label={option.name} value={option.name} />)}</Picker></View>{kind === 'expense' && <><Text style={styles.fieldLabel}>支出方式</Text><View style={styles.financeTypeSelector}><Pressable accessibilityRole="radio" accessibilityState={{ checked: paymentMethod === 'cash' }} style={[styles.financeTypeOption, paymentMethod === 'cash' && styles.financeTypeOptionActive]} onPress={() => setPaymentMethod('cash')}><Text style={[styles.financeTypeOptionText, paymentMethod === 'cash' && styles.financeTypeOptionTextActive]}>現金</Text></Pressable><Pressable accessibilityRole="radio" accessibilityState={{ checked: paymentMethod === 'credit_card' }} style={[styles.financeTypeOption, paymentMethod === 'credit_card' && styles.financeTypeOptionActive]} onPress={() => setPaymentMethod('credit_card')}><Text style={[styles.financeTypeOptionText, paymentMethod === 'credit_card' && styles.financeTypeOptionTextActive]}>信用卡</Text></Pressable></View></>}<Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="decimal-pad" placeholder="例如：150.50" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={transactionAmount} onChangeText={(value) => setTransactionAmount(formatDecimalInput(value))} /><Text style={styles.fieldLabel}>備註</Text><TextInput multiline placeholder="輸入這筆收支的重點內容" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={note} onChangeText={setNote} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
 }
 
 type ProfilePage = 'main' | 'fixed-income' | 'fixed-expense' | 'categories-income' | 'categories-expense' | 'reminders' | 'data' | 'privacy';
@@ -675,10 +831,10 @@ type DreamsHomeProps = {
   dreams: ReadonlyArray<Dream>;
   isFormOpen: boolean;
   isSaving: boolean;
-  monthlyAllocated: number;
-  monthlyAvailable: number;
+  resourceTotal: number;
   onCloseForm: () => void;
   onCreateDream: () => void;
+  onExecuteDream: (id: number) => Promise<boolean>;
   onPickImage: () => void;
   onSaveDream: () => void;
   onSetAllocation: (value: string) => void;
@@ -689,24 +845,48 @@ type DreamsHomeProps = {
 };
 function DreamsHome(props: DreamsHomeProps) {
   const [selectedDream, setSelectedDream] = useState<Dream | null>(null);
-  const monthlyRemaining = Math.max(0, props.monthlyAvailable - props.monthlyAllocated);
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.dreamsContent}><Text style={styles.dreamsTitle}>我的夢想</Text><View style={styles.availableCard}><Text style={styles.availableLabel}>本月可投入夢想</Text><Text accessibilityLiveRegion="polite" style={styles.availableValue}>{money(props.monthlyAvailable)}</Text><Text style={styles.availableDetail}>已分配 {money(props.monthlyAllocated)} ・ 尚可分配 {money(monthlyRemaining)}</Text></View><View style={styles.dreamsSectionHeader}><Text style={styles.dreamsSectionTitle}>進行中的夢想</Text><Text style={styles.dreamCount}>{props.dreams.length} 個</Text></View>{props.dreams.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>還沒有夢想目標</Text><Text style={styles.emptyDreamsText}>建立第一個目標，開始把每月可用資源分配給夢想。</Text></View> : props.dreams.map((dream) => <DreamCard key={dream.id} dream={dream} onPress={() => setSelectedDream(dream)} />)}<Pressable accessibilityRole="button" style={styles.createDreamButton} onPress={props.onCreateDream}><Text style={styles.createDreamButtonText}>＋ 新增夢想</Text></Pressable></ScrollView><View style={styles.tabBar}>{tabs.map((tab) => <Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{ selected: tab.key === 'dreams' }} onPress={() => props.setActiveTab(tab.key)} style={styles.tab}><Text style={[styles.icon, tab.key === 'dreams' && styles.active]}>{tab.icon}</Text><Text style={[styles.tabText, tab.key === 'dreams' && styles.active]}>{tab.label}</Text></Pressable>)}</View><DreamForm {...props} /><DreamDetail dream={selectedDream} onClose={() => setSelectedDream(null)} /></View>;
+  const [isCompletedListOpen, setIsCompletedListOpen] = useState(false);
+  const completedDreams = props.dreams.filter((dream) => dream.completed_at !== null);
+  const activeDreams = props.dreams.filter((dream) => dream.completed_at === null);
+  const executedBudget = completedDreams.filter((dream) => dream.finance_adjusted === 0).reduce((sum, dream) => sum + dream.target_amount, 0);
+  const availableResource = Math.max(0, props.resourceTotal - executedBudget);
+  const currentBudget = activeDreams.reduce((sum, dream) => sum + dream.target_amount, 0);
+  const remainingEffort = availableResource - currentBudget;
+  let resourceToAllocate = availableResource;
+  const activeDreamProgress = activeDreams.map((dream) => {
+    const accumulatedAmount = Math.min(dream.target_amount, resourceToAllocate);
+    resourceToAllocate = Math.max(0, resourceToAllocate - accumulatedAmount);
+    return { dream, accumulatedAmount };
+  });
+  const completableDreamCount = activeDreamProgress.filter(({ dream, accumulatedAmount }) => accumulatedAmount >= dream.target_amount).length;
+  const resourceSummary = completableDreamCount > 0 ? `可完成 ${completableDreamCount} 個目標` : `仍需努力 ${money(remainingEffort)}`;
+  const selectedAccumulatedAmount = selectedDream?.completed_at !== null
+    ? selectedDream?.target_amount ?? 0
+    : activeDreamProgress.find(({ dream }) => dream.id === selectedDream?.id)?.accumulatedAmount ?? 0;
+  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.dreamsContent}><View style={styles.dreamsTopBar}><Text style={styles.dreamsTitle}>我的夢想</Text><Pressable accessibilityRole="button" onPress={() => setIsCompletedListOpen(true)} style={styles.completedListButton}><Text style={styles.completedListButtonText}>完成清單記錄</Text><View style={styles.completedListBadge}><Text style={styles.completedListBadgeText}>{completedDreams.length}</Text></View></Pressable></View><View style={styles.availableCard}><Text style={styles.availableLabel}>我的資源</Text><Text accessibilityLiveRegion="polite" style={styles.availableValue}>{money(availableResource)}</Text><Text style={styles.availableDetail}>目前預算 {money(currentBudget)} ・ {resourceSummary}</Text></View><View style={styles.dreamsSectionHeader}><Text style={styles.dreamsSectionTitle}>進行中的夢想</Text><Text style={styles.dreamCount}>{activeDreams.length} 個</Text></View>{activeDreams.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>{completedDreams.length > 0 ? '所有夢想都已經執行' : '還沒有夢想目標'}</Text><Text style={styles.emptyDreamsText}>{completedDreams.length > 0 ? '太棒了！你可以到完成清單回顧已執行的目標。' : '建立第一個目標，開始安排你的資源與預算。'}</Text></View> : activeDreamProgress.map(({ dream, accumulatedAmount }) => <DreamCard key={dream.id} accumulatedAmount={accumulatedAmount} dream={dream} onPress={() => setSelectedDream(dream)} />)}<Pressable accessibilityRole="button" style={styles.createDreamButton} onPress={props.onCreateDream}><Text style={styles.createDreamButtonText}>＋ 新增夢想</Text></Pressable></ScrollView><View style={styles.tabBar}>{tabs.map((tab) => <Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{ selected: tab.key === 'dreams' }} onPress={() => props.setActiveTab(tab.key)} style={styles.tab}><Text style={[styles.icon, tab.key === 'dreams' && styles.active]}>{tab.icon}</Text><Text style={[styles.tabText, tab.key === 'dreams' && styles.active]}>{tab.label}</Text></Pressable>)}</View><DreamForm {...props} /><CompletedDreamsModal dreams={completedDreams} isOpen={isCompletedListOpen} onClose={() => setIsCompletedListOpen(false)} onSelect={(dream) => { setIsCompletedListOpen(false); setSelectedDream(dream); }} /><DreamDetail accumulatedAmount={selectedAccumulatedAmount} dream={selectedDream} isSaving={props.isSaving} onClose={() => setSelectedDream(null)} onExecute={props.onExecuteDream} /></View>;
 }
-function DreamCard({ dream, onPress }: { dream: Dream; onPress: () => void }) {
-  const percent = dream.target_amount === 0 ? 0 : Math.min(100, Math.round((dream.saved_amount / dream.target_amount) * 100));
-  const remainingAmount = Math.max(0, dream.target_amount - dream.saved_amount);
+function CompletedDreamsModal({ dreams, isOpen, onClose, onSelect }: { dreams: ReadonlyArray<Dream>; isOpen: boolean; onClose: () => void; onSelect: (dream: Dream) => void }) {
+  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onClose}><View style={styles.modalOverlay}><View style={styles.completedListSheet}><View style={styles.completedListHeader}><View><Text style={styles.modalTitle}>完成清單記錄</Text><Text style={styles.completedListSubtitle}>收藏每一個已經執行的夢想</Text></View><Pressable accessibilityLabel="關閉完成清單" hitSlop={10} onPress={onClose} style={styles.completedListClose}><Text style={styles.completedListCloseText}>×</Text></Pressable></View><ScrollView contentContainerStyle={styles.completedListContent} showsVerticalScrollIndicator={false}>{dreams.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>還沒有完成的夢想</Text><Text style={styles.emptyDreamsText}>目標金額達成後，在夢想詳情按下「執行」，卡片才會移到這裡。</Text></View> : dreams.map((dream) => <DreamCard key={dream.id} accumulatedAmount={dream.target_amount} dream={dream} onPress={() => onSelect(dream)} />)}</ScrollView></View></View></Modal>;
+}
+function DreamCard({ accumulatedAmount, dream, onPress }: { accumulatedAmount: number; dream: Dream; onPress: () => void }) {
+  const percent = dream.target_amount === 0 ? 0 : Math.min(100, Math.round((accumulatedAmount / dream.target_amount) * 100));
+  const remainingAmount = Math.max(0, dream.target_amount - accumulatedAmount);
   const months = dream.monthly_allocation === 0 ? null : Math.ceil(remainingAmount / dream.monthly_allocation);
-  const timing = dream.target_date ? `預計 ${dateDisplayValue(dream.target_date)}達成` : months === null ? '尚未安排每月分配' : `約 ${months} 個月後達成`;
-  return <Pressable accessibilityHint="查看夢想進度詳情" accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.dreamCard, pressed && styles.dreamCardPressed]}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.dreamImage} /> : <View style={styles.dreamIcon}><Text style={styles.dreamIconText}>✦</Text></View>}<View style={styles.dreamMeta}><View style={styles.dreamTitleLine}><Text numberOfLines={1} style={styles.dreamName}>{dream.title}</Text><Text style={styles.dreamPercent}>{percent}%</Text></View><Text style={styles.dreamDetail}>目前累積 {money(dream.saved_amount)}／{money(dream.target_amount)}</Text><Text style={styles.dreamTiming}>{timing}</Text><View style={styles.dreamProgressTrack}><View style={[styles.dreamProgressFill, { width: `${percent}%` as `${number}%` }]} /></View></View></Pressable>;
+  const timing = dream.completed_at ? `完成於 ${new Date(dream.completed_at).toLocaleString('zh-TW', { dateStyle: 'medium', timeStyle: 'short' })}` : dream.target_date ? `預計 ${dateDisplayValue(dream.target_date)}達成` : months === null ? '尚未安排每月分配' : `約 ${months} 個月後達成`;
+  return <Pressable accessibilityHint="查看夢想進度詳情" accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.dreamCard, pressed && styles.dreamCardPressed]}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.dreamImage} /> : <View style={styles.dreamIcon}><Text style={styles.dreamIconText}>✦</Text></View>}<View style={styles.dreamMeta}><View style={styles.dreamTitleLine}><Text numberOfLines={1} style={styles.dreamName}>{dream.title}</Text><Text style={styles.dreamPercent}>{percent}%</Text></View><Text style={styles.dreamDetail}>目前累積 {money(accumulatedAmount)}／{money(dream.target_amount)}</Text><Text style={styles.dreamTiming}>{timing}</Text><View style={styles.dreamProgressTrack}><View style={[styles.dreamProgressFill, { width: `${percent}%` as `${number}%` }]} /></View></View></Pressable>;
 }
-function DreamDetail({ dream, onClose }: { dream: Dream | null; onClose: () => void }) {
+function DreamDetail({ accumulatedAmount, dream, isSaving, onClose, onExecute }: { accumulatedAmount: number; dream: Dream | null; isSaving: boolean; onClose: () => void; onExecute: (id: number) => Promise<boolean> }) {
+  const [executionCancelled, setExecutionCancelled] = useState(false);
+  useEffect(() => { setExecutionCancelled(false); }, [dream]);
   if (dream === null) return null;
-  const percent = dream.target_amount === 0 ? 0 : Math.min(100, Math.round((dream.saved_amount / dream.target_amount) * 100));
+  const percent = dream.target_amount === 0 ? 0 : Math.min(100, Math.round((accumulatedAmount / dream.target_amount) * 100));
   const expired = dream.target_date !== null && new Date(`${dream.target_date}T23:59:59`).getTime() < Date.now();
-  const remainingAmount = Math.max(0, dream.target_amount - dream.saved_amount);
+  const remainingAmount = Math.max(0, dream.target_amount - accumulatedAmount);
   const months = dream.monthly_allocation === 0 ? null : Math.ceil(remainingAmount / dream.monthly_allocation);
   const timing = dream.target_date ? `預計達成時間　${dateDisplayValue(dream.target_date)}` : months === null ? '尚未安排每月分配' : `依目前投入估算，約 ${months} 個月後達成`;
-  return <Modal animationType="slide" transparent visible onRequestClose={onClose}><View style={styles.modalOverlay}><View style={styles.detailSheet}><ScrollView showsVerticalScrollIndicator={false}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.detailImage} /> : <View style={styles.detailImageFallback}><Text style={styles.detailImageFallbackText}>✦</Text></View>}<Text style={styles.detailTitle}>{dream.title}</Text><Text style={styles.detailDate}>{timing}</Text><View style={styles.detailAmounts}><View><Text style={styles.detailAmountLabel}>目標金額</Text><Text style={styles.detailAmountValue}>{money(dream.target_amount)}</Text></View><View><Text style={styles.detailAmountLabel}>目前累積</Text><Text style={styles.detailAmountValue}>{money(dream.saved_amount)}</Text></View></View><View style={styles.detailProgressHeader}><Text style={styles.detailProgressLabel}>目前進度</Text><Text style={styles.detailProgressPercent}>{percent}%</Text></View><View style={styles.detailProgressTrack}><View style={[styles.detailProgressFill, { width: `${percent}%` as `${number}%` }]} /></View><View style={[styles.encouragement, expired && styles.encouragementExpired]}><Text style={styles.encouragementIcon}>{expired ? '🌱' : '✨'}</Text><Text style={styles.encouragementText}>{expired ? '加油，再接再勵' : '加油，你的目標不遠了'}</Text></View><Pressable accessibilityRole="button" style={styles.detailCloseButton} onPress={onClose}><Text style={styles.buttonText}>關閉</Text></Pressable></ScrollView></View></View></Modal>;
+  const execute = (): void => { void (async (): Promise<void> => { if (await onExecute(dream.id)) onClose(); })(); };
+  const canExecute = percent >= 100 && dream.completed_at === null;
+  return <Modal animationType="slide" transparent visible onRequestClose={onClose}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.detailSheet}><ScrollView keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.detailImage} /> : <View style={styles.detailImageFallback}><Text style={styles.detailImageFallbackText}>✦</Text></View>}<Text style={styles.detailTitle}>{dream.title}</Text><Text style={styles.detailDate}>{timing}</Text><View style={styles.detailAmounts}><View><Text style={styles.detailAmountLabel}>目標金額</Text><Text style={styles.detailAmountValue}>{money(dream.target_amount)}</Text></View><View><Text style={styles.detailAmountLabel}>目前累積</Text><Text style={styles.detailAmountValue}>{money(accumulatedAmount)}</Text></View></View><View style={styles.detailProgressHeader}><Text style={styles.detailProgressLabel}>目前進度</Text><Text style={styles.detailProgressPercent}>{percent}%</Text></View><View style={styles.detailProgressTrack}><View style={[styles.detailProgressFill, { width: `${percent}%` as `${number}%` }]} /></View>{dream.completed_at !== null ? <View style={styles.executedDreamCard}><Text style={styles.executedDreamTitle}>這個夢想已經執行</Text><Text style={styles.executedDreamTime}>{new Date(dream.completed_at).toLocaleString('zh-TW')}</Text></View> : executionCancelled ? <View style={styles.executionCancelledCard}><Text style={styles.executionCancelledText}>這次先不執行，夢想會保留在進行中。</Text><Pressable onPress={() => setExecutionCancelled(false)}><Text style={styles.executionRetryText}>重新選擇</Text></Pressable></View> : <View style={[styles.executionDecision, !canExecute && styles.executionDecisionDisabled]}><Text style={styles.executionDecisionTitle}>是否要執行這個夢想？</Text><Text style={styles.executionDecisionHint}>{canExecute ? '按下執行後，將記錄現在的時間並移到完成清單。' : '個人權益足以讓進度達到 100% 後即可執行。'}</Text><View style={styles.executionActions}><Pressable disabled={!canExecute || isSaving} onPress={execute} style={[styles.executionConfirmButton, (!canExecute || isSaving) && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.executionConfirmText}>執行</Text>}</Pressable><Pressable disabled={isSaving} onPress={() => setExecutionCancelled(true)} style={styles.executionCancelButton}><Text style={styles.executionCancelText}>取消</Text></Pressable></View></View>}{dream.completed_at === null && <View style={[styles.encouragement, expired && !canExecute && styles.encouragementExpired]}><Text style={styles.encouragementIcon}>{canExecute ? '🎆' : expired ? '🌱' : '✨'}</Text><Text style={styles.encouragementText}>{canExecute ? '哇，你真棒，你可以進行這個夢想了' : expired ? '加油，再接再勵' : '加油，你的目標不遠了'}</Text></View>}<Pressable accessibilityRole="button" style={styles.detailCloseButton} onPress={onClose}><Text style={styles.buttonText}>關閉</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
 }
 function DreamForm(props: DreamsHomeProps) {
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -799,7 +979,7 @@ const styles = StyleSheet.create({
   welcome: { backgroundColor: '#FBF8F0', flex: 1 }, welcomeBackground: { flex: 1, justifyContent: 'space-between' }, welcomeCopy: { paddingHorizontal: 28, paddingTop: 72 }, welcomeTitle: { color: '#102548', fontSize: 38, fontWeight: '800', letterSpacing: 0.2, lineHeight: 48 }, welcomeDescription: { color: '#33445B', fontSize: 17, lineHeight: 27, marginTop: 22 }, welcomeDescriptionLine: { color: '#33445B', fontSize: 17, lineHeight: 27 }, welcomeFooter: { paddingBottom: 24, paddingHorizontal: 20 }, welcomeButton: { alignItems: 'center', backgroundColor: '#075B35', borderRadius: 12, justifyContent: 'center', minHeight: 56, shadowColor: '#0A3324', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.16, shadowRadius: 9 }, note: { color: '#34455B', fontSize: 13, marginTop: 16, textAlign: 'center' },
   onboardingScroll: { flex: 1 }, scroll: { flexGrow: 1, padding: 24, paddingBottom: 24, paddingTop: 34 }, cashFlowScreenContent: { flex: 1, paddingBottom: 10, paddingHorizontal: 24, paddingTop: 34 }, progress: { color: '#718096', fontSize: 13, marginTop: 12 }, track: { backgroundColor: '#E5E9E6', borderRadius: 99, height: 6, marginTop: 9, overflow: 'hidden' }, trackValue: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' }, form: { marginTop: 28 }, cashFlowForm: { flex: 1, minHeight: 0 }, cashFlowFlowBlock: { flex: 1, minHeight: 0, overflow: 'hidden' }, cashFlowFlowItems: { flex: 1 }, cashFlowItemsContent: { paddingBottom: 2 }, entry: { flexDirection: 'row', gap: 8, marginBottom: 12 }, category: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', flex: 1.25, minHeight: 52, paddingHorizontal: 12 }, amount: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', flex: 1, minHeight: 52, paddingHorizontal: 12 }, entryTotal: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 12, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 16, paddingVertical: 17 }, entryTotalLabel: { color: '#132442', fontSize: 16, fontWeight: '700' }, entryTotalValue: { color: '#075B35', fontSize: 19, fontWeight: '800' }, add: { alignItems: 'center', borderColor: '#8ABFA7', borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 48 }, addText: { color: '#087A50', fontWeight: '700' }, itemLimit: { color: '#718096', fontSize: 12, marginTop: 10, textAlign: 'right' }, helper: { color: '#718096', fontSize: 13, lineHeight: 19, marginTop: 12 },
   summary: { backgroundColor: '#FFFFFF', borderRadius: 16, marginTop: 28, overflow: 'hidden' }, net: { backgroundColor: '#EAF6EF', padding: 18 }, netLabel: { color: '#176342', fontSize: 14 }, netValue: { color: '#07583A', fontSize: 28, fontWeight: '800', marginTop: 6 }, row: { borderTopColor: '#E7EAE7', borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', padding: 16 }, rowText: { color: '#526277', fontSize: 15 }, rowValue: { color: '#132442', fontSize: 15, fontWeight: '700' }, highlight: { color: '#087A50', fontWeight: '800' },
-  dreamsContent: { padding: 24, paddingBottom: 28, paddingTop: 58 }, dreamsTitle: { color: '#132442', fontSize: 30, fontWeight: '800' }, availableCard: { backgroundColor: '#087A50', borderRadius: 18, marginTop: 18, padding: 18 }, availableLabel: { color: '#D9F3E5', fontSize: 14 }, availableValue: { color: '#FFFFFF', fontSize: 30, fontWeight: '800', marginTop: 5 }, availableDetail: { color: '#D9F3E5', fontSize: 13, marginTop: 7 }, dreamsSectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 24, marginBottom: 10 }, dreamsSectionTitle: { color: '#132442', fontSize: 17, fontWeight: '700' }, dreamCount: { color: '#718096', fontSize: 13 }, emptyDreams: { backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 16, borderWidth: 1, padding: 20 }, emptyDreamsTitle: { color: '#132442', fontSize: 16, fontWeight: '700' }, emptyDreamsText: { color: '#617085', fontSize: 14, lineHeight: 21, marginTop: 8 }, createDreamButton: { alignItems: 'center', borderColor: '#2B966A', borderRadius: 13, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', marginTop: 14, minHeight: 52 }, createDreamButtonText: { color: '#087A50', fontSize: 15, fontWeight: '700' }, dreamCard: { backgroundColor: '#FFFFFF', borderRadius: 16, flexDirection: 'row', marginBottom: 10, padding: 14 }, dreamIcon: { alignItems: 'center', backgroundColor: '#0B5F54', borderRadius: 13, height: 62, justifyContent: 'center', width: 62 }, dreamIconText: { color: '#FFFFFF', fontSize: 24 }, dreamImage: { borderRadius: 13, height: 62, width: 62 }, dreamMeta: { flex: 1, marginLeft: 12 }, dreamTitleLine: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, dreamName: { color: '#132442', flex: 1, fontSize: 16, fontWeight: '700', marginRight: 8 }, dreamPercent: { color: '#087A50', fontSize: 14, fontWeight: '800' }, dreamDetail: { color: '#617085', fontSize: 12, marginTop: 4 }, dreamProgressTrack: { backgroundColor: '#E6ECE7', borderRadius: 99, height: 7, marginTop: 8, overflow: 'hidden' }, dreamProgressFill: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' }, dreamTiming: { color: '#617085', fontSize: 11, marginTop: 7 }, modalKeyboardView: { flex: 1 }, modalOverlay: { backgroundColor: 'rgba(19, 36, 66, 0.35)', flex: 1, justifyContent: 'flex-end' }, modalSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', overflow: 'hidden' }, modalScrollContent: { padding: 24, paddingBottom: 34 }, modalTitle: { color: '#132442', fontSize: 24, fontWeight: '800' }, modalDescription: { color: '#617085', fontSize: 14, lineHeight: 21, marginTop: 7 }, fieldLabel: { color: '#2F4058', fontSize: 14, fontWeight: '700', marginTop: 20, marginBottom: 8 }, imagePicker: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 14, borderWidth: 1, height: 150, overflow: 'hidden', position: 'relative' }, imagePreview: { height: '100%', width: '100%' }, imagePlaceholder: { alignItems: 'center', flex: 1, justifyContent: 'center' }, imagePlaceholderIcon: { color: '#087A50', fontSize: 28, fontWeight: '500' }, imagePlaceholderText: { color: '#617085', fontSize: 13, marginTop: 5 }, imagePickerBadge: { backgroundColor: 'rgba(7, 91, 53, 0.9)', borderRadius: 9, bottom: 10, paddingHorizontal: 11, paddingVertical: 7, position: 'absolute', right: 10 }, imagePickerBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' }, modalInput: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', fontSize: 16, minHeight: 52, paddingHorizontal: 14 }, modalPrimaryButton: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 14, justifyContent: 'center', marginTop: 24, minHeight: 54 }, modalCancelButton: { alignItems: 'center', justifyContent: 'center', minHeight: 46, marginTop: 6 }, modalCancelText: { color: '#526277', fontSize: 15, fontWeight: '700' },
+  dreamsContent: { padding: 24, paddingBottom: 28, paddingTop: 58 }, dreamsTopBar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, dreamsTitle: { color: '#132442', fontSize: 30, fontWeight: '800' }, completedListButton: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 16, flexDirection: 'row', minHeight: 36, paddingHorizontal: 11 }, completedListButtonText: { color: '#087A50', fontSize: 11, fontWeight: '800' }, completedListBadge: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 10, height: 20, justifyContent: 'center', marginLeft: 6, minWidth: 20, paddingHorizontal: 5 }, completedListBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' }, availableCard: { backgroundColor: '#087A50', borderRadius: 18, marginTop: 18, padding: 18 }, availableLabel: { color: '#D9F3E5', fontSize: 14 }, availableValue: { color: '#FFFFFF', fontSize: 30, fontWeight: '800', marginTop: 5 }, availableDetail: { color: '#D9F3E5', fontSize: 13, marginTop: 7 }, dreamsSectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 24, marginBottom: 10 }, dreamsSectionTitle: { color: '#132442', fontSize: 17, fontWeight: '700' }, dreamCount: { color: '#718096', fontSize: 13 }, emptyDreams: { backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 16, borderWidth: 1, padding: 20 }, emptyDreamsTitle: { color: '#132442', fontSize: 16, fontWeight: '700' }, emptyDreamsText: { color: '#617085', fontSize: 14, lineHeight: 21, marginTop: 8 }, createDreamButton: { alignItems: 'center', borderColor: '#2B966A', borderRadius: 13, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', marginTop: 14, minHeight: 52 }, createDreamButtonText: { color: '#087A50', fontSize: 15, fontWeight: '700' }, dreamCard: { backgroundColor: '#FFFFFF', borderRadius: 16, flexDirection: 'row', marginBottom: 10, padding: 14 }, dreamIcon: { alignItems: 'center', backgroundColor: '#0B5F54', borderRadius: 13, height: 62, justifyContent: 'center', width: 62 }, dreamIconText: { color: '#FFFFFF', fontSize: 24 }, dreamImage: { borderRadius: 13, height: 62, width: 62 }, dreamMeta: { flex: 1, marginLeft: 12 }, dreamTitleLine: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, dreamName: { color: '#132442', flex: 1, fontSize: 16, fontWeight: '700', marginRight: 8 }, dreamPercent: { color: '#087A50', fontSize: 14, fontWeight: '800' }, dreamDetail: { color: '#617085', fontSize: 12, marginTop: 4 }, dreamProgressTrack: { backgroundColor: '#E6ECE7', borderRadius: 99, height: 7, marginTop: 8, overflow: 'hidden' }, dreamProgressFill: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' }, dreamTiming: { color: '#617085', fontSize: 11, marginTop: 7 }, completedListSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 26, borderTopRightRadius: 26, maxHeight: '88%', minHeight: '54%', overflow: 'hidden' }, completedListHeader: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', padding: 24, paddingBottom: 16 }, completedListSubtitle: { color: '#617085', fontSize: 13, marginTop: 5 }, completedListClose: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 }, completedListCloseText: { color: '#526277', fontSize: 25, lineHeight: 27 }, completedListContent: { padding: 24, paddingTop: 4 }, modalKeyboardView: { flex: 1 }, modalOverlay: { backgroundColor: 'rgba(19, 36, 66, 0.35)', flex: 1, justifyContent: 'flex-end' }, modalSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', overflow: 'hidden' }, modalScrollContent: { padding: 24, paddingBottom: 34 }, modalTitle: { color: '#132442', fontSize: 24, fontWeight: '800' }, modalDescription: { color: '#617085', fontSize: 14, lineHeight: 21, marginTop: 7 }, fieldLabel: { color: '#2F4058', fontSize: 14, fontWeight: '700', marginTop: 20, marginBottom: 8 }, imagePicker: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 14, borderWidth: 1, height: 150, overflow: 'hidden', position: 'relative' }, imagePreview: { height: '100%', width: '100%' }, imagePlaceholder: { alignItems: 'center', flex: 1, justifyContent: 'center' }, imagePlaceholderIcon: { color: '#087A50', fontSize: 28, fontWeight: '500' }, imagePlaceholderText: { color: '#617085', fontSize: 13, marginTop: 5 }, imagePickerBadge: { backgroundColor: 'rgba(7, 91, 53, 0.9)', borderRadius: 9, bottom: 10, paddingHorizontal: 11, paddingVertical: 7, position: 'absolute', right: 10 }, imagePickerBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' }, modalInput: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', fontSize: 16, minHeight: 52, paddingHorizontal: 14 }, modalPrimaryButton: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 14, justifyContent: 'center', marginTop: 24, minHeight: 54 }, modalCancelButton: { alignItems: 'center', justifyContent: 'center', minHeight: 46, marginTop: 6 }, modalCancelText: { color: '#526277', fontSize: 15, fontWeight: '700' },
   dreamCardPressed: { opacity: 0.72, transform: [{ scale: 0.99 }] },
   dateHint: { color: '#718096', fontSize: 11, marginTop: 7 },
   dateFieldRow: { alignItems: 'center', flexDirection: 'row', gap: 9 },
@@ -824,11 +1004,34 @@ const styles = StyleSheet.create({
   detailAmounts: { backgroundColor: '#FFFFFF', borderRadius: 15, flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, padding: 16 },
   detailAmountLabel: { color: '#718096', fontSize: 11 },
   detailAmountValue: { color: '#132442', fontSize: 17, fontWeight: '800', marginTop: 4 },
+  progressEditor: { backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 15, borderWidth: 1, marginTop: 16, padding: 15 },
+  progressInputRow: { flexDirection: 'row', gap: 9, marginTop: 9 },
+  progressAmountInput: { backgroundColor: '#FCFAF5', borderColor: '#DDE3E8', borderRadius: 11, borderWidth: 1, color: '#132442', flex: 1, fontSize: 16, minHeight: 48, paddingHorizontal: 13 },
+  progressSaveButton: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 11, justifyContent: 'center', minHeight: 48, minWidth: 72, paddingHorizontal: 14 },
+  progressSaveButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
+  progressPreviewHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
+  progressPreviewLabel: { color: '#617085', fontSize: 12, fontWeight: '700' },
+  progressPreviewTrack: { backgroundColor: '#E3EAE5', borderRadius: 99, height: 8, marginTop: 8, overflow: 'hidden' },
   detailProgressHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 21 },
   detailProgressLabel: { color: '#2F4058', fontSize: 14, fontWeight: '700' },
   detailProgressPercent: { color: '#087A50', fontSize: 16, fontWeight: '800' },
   detailProgressTrack: { backgroundColor: '#E3EAE5', borderRadius: 99, height: 11, marginTop: 9, overflow: 'hidden' },
   detailProgressFill: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' },
+  executedDreamCard: { backgroundColor: '#E7F3EB', borderColor: '#B8D7C2', borderRadius: 16, borderWidth: 1, marginTop: 16, padding: 16 },
+  executedDreamTitle: { color: '#0B5538', fontSize: 16, fontWeight: '800', marginBottom: 5 },
+  executedDreamTime: { color: '#557064', fontSize: 13, fontWeight: '600' },
+  executionCancelledCard: { alignItems: 'center', backgroundColor: '#F8F1E3', borderRadius: 16, marginTop: 16, padding: 16 },
+  executionCancelledText: { color: '#655B46', fontSize: 14, fontWeight: '600', lineHeight: 20, textAlign: 'center' },
+  executionRetryText: { color: '#087A50', fontSize: 14, fontWeight: '800', marginTop: 10 },
+  executionDecision: { backgroundColor: '#F2F8F4', borderColor: '#B8D7C2', borderRadius: 16, borderWidth: 1, marginTop: 16, padding: 16 },
+  executionDecisionDisabled: { backgroundColor: '#F6F6F2', borderColor: '#E2E2DC' },
+  executionDecisionTitle: { color: '#10213C', fontSize: 17, fontWeight: '800' },
+  executionDecisionHint: { color: '#657184', fontSize: 13, lineHeight: 19, marginTop: 6 },
+  executionActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
+  executionConfirmButton: { alignItems: 'center', backgroundColor: '#0B5538', borderRadius: 12, flex: 1, justifyContent: 'center', minHeight: 46 },
+  executionConfirmText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
+  executionCancelButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#C8D0CB', borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 46 },
+  executionCancelText: { color: '#435047', fontSize: 15, fontWeight: '800' },
   encouragement: { alignItems: 'center', backgroundColor: '#EAF5ED', borderRadius: 15, flexDirection: 'row', marginTop: 16, padding: 14 },
   encouragementExpired: { backgroundColor: '#FFF1DE' },
   encouragementIcon: { fontSize: 22, marginRight: 9 },
@@ -907,11 +1110,31 @@ const styles = StyleSheet.create({
   transactionList: { backgroundColor: '#FFFFFF', borderRadius: 15, overflow: 'hidden' },
   emptyTransactionText: { color: '#8A96A5', fontSize: 13, padding: 16, textAlign: 'center' },
   transactionRow: { alignItems: 'center', borderBottomColor: '#EEEAE2', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', minHeight: 60, paddingHorizontal: 13 },
+  swipeRow: { backgroundColor: '#C74E48', overflow: 'hidden', position: 'relative' },
+  swipeRowForeground: { backgroundColor: '#FFFFFF' },
+  swipeDeleteAction: { alignItems: 'center', bottom: 0, justifyContent: 'center', position: 'absolute', right: 0, top: 0, width: 76 },
+  swipeDeleteIcon: { fontSize: 23 },
   transactionKindDot: { borderRadius: 5, height: 10, marginRight: 10, width: 10 },
   transactionCopy: { flex: 1 },
   transactionCategory: { color: '#273952', fontSize: 13, fontWeight: '700' },
   transactionNote: { color: '#718096', fontSize: 10, marginTop: 3 },
   transactionAmount: { fontSize: 12, fontWeight: '800', marginLeft: 8 },
+  transactionDetailCard: { backgroundColor: '#F7F9F7', borderRadius: 15, marginTop: 18, paddingHorizontal: 15 },
+  transactionDetailRow: { alignItems: 'flex-start', borderBottomColor: '#E5E9E6', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 13 },
+  transactionDetailLabel: { color: '#718096', fontSize: 13, fontWeight: '600' },
+  transactionDetailValue: { color: '#273952', flex: 1, fontSize: 14, fontWeight: '700', marginLeft: 20, textAlign: 'right' },
+  transactionPickerBox: { backgroundColor: '#F7F9F7', borderColor: '#DDE3E0', borderRadius: 13, borderWidth: 1, maxHeight: 150, overflow: 'hidden' },
+  deleteConfirmOverlay: { alignItems: 'center', backgroundColor: 'rgba(13, 29, 24, 0.48)', flex: 1, justifyContent: 'center', padding: 28 },
+  deleteConfirmCard: { alignItems: 'center', backgroundColor: '#FCFAF5', borderRadius: 22, maxWidth: 360, padding: 24, width: '100%' },
+  deleteConfirmIcon: { alignItems: 'center', backgroundColor: '#FCE9E6', borderRadius: 28, height: 56, justifyContent: 'center', marginBottom: 14, width: 56 },
+  deleteConfirmIconText: { fontSize: 25 },
+  deleteConfirmTitle: { color: '#132442', fontSize: 20, fontWeight: '800', textAlign: 'center' },
+  deleteConfirmDescription: { color: '#718096', fontSize: 13, lineHeight: 20, marginTop: 8, textAlign: 'center' },
+  deleteConfirmActions: { flexDirection: 'row', gap: 10, marginTop: 22, width: '100%' },
+  deleteConfirmCancelButton: { alignItems: 'center', borderColor: '#CBD3D0', borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 48 },
+  deleteConfirmCancelText: { color: '#435047', fontSize: 15, fontWeight: '800' },
+  deleteConfirmDeleteButton: { alignItems: 'center', backgroundColor: '#C74E48', borderRadius: 12, flex: 1, justifyContent: 'center', minHeight: 48 },
+  deleteConfirmDeleteText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
   fixedFinanceGrid: { flexDirection: 'row', gap: 10 },
   fixedFinanceList: { gap: 9 },
   fixedFinanceCard: { backgroundColor: '#FFFFFF', borderRadius: 15, borderTopWidth: 6, flex: 1, padding: 13 },
