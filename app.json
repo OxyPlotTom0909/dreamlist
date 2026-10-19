@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "我的夢想",
-    "slug": "my-dreams-app",
+    "name": "夢想未來記帳本",
+    "slug": "aimmora",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -26,7 +26,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "允許「我的夢想」存取相簿，讓你為夢想選擇代表圖片。",
+          "photosPermission": "允許「夢想未來記帳本」存取相簿，讓你為夢想選擇代表圖片。",
           "cameraPermission": false,
           "microphonePermission": false
         }
