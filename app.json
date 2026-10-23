@@ -2,7 +2,7 @@
   "expo": {
     "name": "夢想未來記帳本",
     "slug": "aimmora",
-    "version": "1.0.0",
+    "version": "0.95.0",
     "orientation": "portrait",
     "icon": "./assets/aimmora-icon.png",
     "userInterfaceStyle": "light",

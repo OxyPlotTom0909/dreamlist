@@ -3497,7 +3497,8 @@ type ProfilePage =
   | "reminders"
   | "language"
   | "data"
-  | "privacy";
+  | "privacy"
+  | "about";
 type FixedEntryInput = {
   id?: number;
   kind: TransactionKind;
@@ -3631,6 +3632,8 @@ function ProfileHome({
     );
   if (page === "privacy")
     return <PrivacyAndGuidePage onBack={() => setPage("main")} />;
+  if (page === "about")
+    return <AboutPage onBack={() => setPage("main")} />;
   const categoryNames = (kind: TransactionKind): string =>
     categories
       .filter((category) => category.kind === kind)
@@ -3744,6 +3747,12 @@ function ProfileHome({
           icon="?"
           title="隱私與使用說明"
           onPress={() => setPage("privacy")}
+        />
+        <ProfileRow
+          icon="i"
+          title="關於"
+          detail="版本 0.95"
+          onPress={() => setPage("about")}
         />
       </ScrollView>
       <MainTabs activeTab="profile" setActiveTab={setActiveTab} />
@@ -4440,6 +4449,23 @@ function PrivacyAndGuidePage({ onBack }: { onBack: () => void }) {
             提供的是個人整理與規劃工具，不構成投資、會計、稅務或法律建議。重要財務決策請諮詢合格專業人士。
           </InfoParagraph>
         </InfoSection>
+      </ScrollView>
+    </View>
+  );
+}
+function AboutPage({ onBack }: { onBack: () => void }) {
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <SubpageHeader onBack={onBack} title="關於" />
+        <View style={styles.infoSection}>
+          <Text style={styles.infoSectionTitle}>夢想未來記帳本</Text>
+          <InfoParagraph title="開發緣由">
+            每個夢想都需要資源，也需要一條看得見的前進路徑。夢想未來記帳本從「先理解自己的財務，再安排想完成的夢想」出發，將夢想清單、個人權益與負債、收支日曆整合在同一個 App，幫助使用者把日常記帳轉化為朝目標前進的行動。
+          </InfoParagraph>
+          <InfoParagraph title="版本號">0.95</InfoParagraph>
+        </View>
       </ScrollView>
     </View>
   );

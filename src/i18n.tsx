@@ -402,6 +402,11 @@ const english: Readonly<Record<string, string>> = {
   "依手機語言與地區自動選擇": "Automatically choose based on device language and region",
   固定使用繁體中文: "Always display the app in Traditional Chinese",
   語言設定尚未更新: "Language setting was not updated",
+  關於: "About",
+  開發緣由: "Why we built this app",
+  版本號: "Version",
+  "版本 0.95": "Version 0.95",
+  "每個夢想都需要資源，也需要一條看得見的前進路徑。夢想未來記帳本從「先理解自己的財務，再安排想完成的夢想」出發，將夢想清單、個人權益與負債、收支日曆整合在同一個 App，幫助使用者把日常記帳轉化為朝目標前進的行動。": "Every dream needs resources and a visible path forward. Aimmora starts with understanding your finances before planning the dreams you want to achieve. It brings your dream list, personal equity and liabilities, and income and expense calendar together in one app, helping turn everyday money tracking into meaningful progress toward your goals.",
 };
 
 const phraseReplacements: ReadonlyArray<readonly [string, string]> =
