@@ -4,8 +4,13 @@
     "slug": "aimmora",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/aimmora-icon.png",
     "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/aimmora-splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#004F38"
+    },
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -14,15 +19,13 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#004F38",
+        "foregroundImage": "./assets/aimmora-android-foreground.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/aimmora-favicon.png"
     },
     "plugins": [
       "expo-sqlite",

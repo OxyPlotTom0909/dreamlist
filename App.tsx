@@ -4836,7 +4836,7 @@ function DreamsHome(props: DreamsHomeProps) {
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.dreamsContent}>
         <View style={styles.dreamsTopBar}>
-          <Text style={styles.dreamsTitle}>夢想未來記帳本</Text>
+          <Text style={styles.dreamsTitle}>夢想清單</Text>
           <Pressable
             accessibilityRole="button"
             onPress={() => setIsCompletedListOpen(true)}

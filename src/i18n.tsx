@@ -89,6 +89,7 @@ const english: Readonly<Record<string, string>> = {
   執行: "Complete dream",
   "增加夢想清單（暫未開放）": "Add dream list (coming soon)",
   夢想: "Dreams",
+  夢想清單: "Dream List",
   夢想列表: "Dream list",
   夢想名稱: "Dream name",
   夢想圖片: "Dream image",
