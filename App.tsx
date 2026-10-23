@@ -69,6 +69,12 @@ type FinancialEntry = {
   note: string;
   color: string;
 };
+type FinanceSnapshot = {
+  snapshot_month: string;
+  liability_total: number;
+  equity_total: number;
+  recorded_at: string;
+};
 type StoredProfile = { display_name: string; avatar_uri: string | null };
 type TransactionKind = "income" | "expense";
 type PaymentMethod = "cash" | "credit_card";
@@ -173,6 +179,7 @@ async function database(): Promise<SQLiteDatabase> {
     CREATE TABLE IF NOT EXISTS calendar_transactions (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN ('income','expense')), category TEXT NOT NULL, amount REAL NOT NULL, note TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL, payment_method TEXT, finance_adjusted INTEGER NOT NULL DEFAULT 0, dream_id INTEGER);
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, day_of_month INTEGER NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL, notification_identifier TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS finance_monthly_snapshots (snapshot_month TEXT PRIMARY KEY, liability_total REAL NOT NULL, equity_total REAL NOT NULL, recorded_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS dreams (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0, monthly_allocation REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, finance_adjusted INTEGER NOT NULL DEFAULT 0, calendar_entry_deleted INTEGER NOT NULL DEFAULT 0);`);
   const categorySeed = await db.getFirstAsync<AppSetting>(
     "SELECT key, value FROM app_settings WHERE key = 'categories_seeded'",
@@ -494,6 +501,70 @@ async function readAmountTotal(
   );
   return row?.total ?? 0;
 }
+function snapshotMonthValue(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+function snapshotMonthLabel(value: string): string {
+  const [year, month] = value.split("-").map(Number);
+  if (appLanguage === "zh-Hant") return `${year} 年 ${month} 月`;
+  return new Date(year, month - 1, 1).toLocaleDateString(appLocale, {
+    month: "short",
+    year: "numeric",
+  });
+}
+async function upsertCurrentFinanceSnapshot(
+  db: SQLiteDatabase,
+  entries: ReadonlyArray<FinancialEntry>,
+): Promise<void> {
+  const currentMonth = snapshotMonthValue(new Date());
+  const latestSnapshot = await db.getFirstAsync<FinanceSnapshot>(
+    "SELECT snapshot_month, liability_total, equity_total, recorded_at FROM finance_monthly_snapshots ORDER BY snapshot_month DESC LIMIT 1",
+  );
+  if (latestSnapshot && latestSnapshot.snapshot_month < currentMonth) {
+    const [latestYear, latestMonth] = latestSnapshot.snapshot_month
+      .split("-")
+      .map(Number);
+    const cursor = new Date(latestYear, latestMonth, 1);
+    const currentMonthDate = new Date();
+    currentMonthDate.setDate(1);
+    currentMonthDate.setHours(0, 0, 0, 0);
+    while (cursor < currentMonthDate) {
+      await db.runAsync(
+        "INSERT OR IGNORE INTO finance_monthly_snapshots (snapshot_month, liability_total, equity_total, recorded_at) VALUES (?, ?, ?, ?)",
+        snapshotMonthValue(cursor),
+        latestSnapshot.liability_total,
+        latestSnapshot.equity_total,
+        new Date(
+          cursor.getFullYear(),
+          cursor.getMonth() + 1,
+          0,
+          23,
+          59,
+          59,
+        ).toISOString(),
+      );
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+  }
+  const liabilityTotal = entries
+    .filter((entry) => entry.kind === "liability")
+    .reduce((sum, entry) => sum + entry.amount, 0);
+  const equityTotal = entries
+    .filter((entry) => entry.kind === "asset")
+    .reduce((sum, entry) => sum + entry.amount, 0);
+  await db.runAsync(
+    `INSERT INTO finance_monthly_snapshots (snapshot_month, liability_total, equity_total, recorded_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(snapshot_month) DO UPDATE SET
+       liability_total = excluded.liability_total,
+       equity_total = excluded.equity_total,
+       recorded_at = excluded.recorded_at`,
+    currentMonth,
+    liabilityTotal,
+    equityTotal,
+    new Date().toISOString(),
+  );
+}
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -512,6 +583,9 @@ export default function App() {
   const [dreams, setDreams] = useState<ReadonlyArray<Dream>>([]);
   const [financialEntries, setFinancialEntries] = useState<
     ReadonlyArray<FinancialEntry>
+  >([]);
+  const [financeSnapshots, setFinanceSnapshots] = useState<
+    ReadonlyArray<FinanceSnapshot>
   >([]);
   const [transactionCategories, setTransactionCategories] = useState<
     ReadonlyArray<TransactionCategory>
@@ -596,6 +670,12 @@ export default function App() {
         ?.value ?? DEFAULT_FIXED_EXPENSE_COLOR,
     );
     setReminders(storedReminders);
+    await upsertCurrentFinanceSnapshot(db, storedEntries);
+    setFinanceSnapshots(
+      await db.getAllAsync<FinanceSnapshot>(
+        "SELECT snapshot_month, liability_total, equity_total, recorded_at FROM finance_monthly_snapshots ORDER BY snapshot_month DESC",
+      ),
+    );
   };
 
   useEffect(() => {
@@ -763,6 +843,7 @@ export default function App() {
         await db.runAsync("DELETE FROM dreams");
         await db.runAsync("DELETE FROM app_settings");
         await db.runAsync("DELETE FROM reminders");
+        await db.runAsync("DELETE FROM finance_monthly_snapshots");
         await db.runAsync("DELETE FROM profile WHERE id = 1");
       });
       await Notifications.cancelAllScheduledNotificationsAsync();
@@ -774,6 +855,7 @@ export default function App() {
       setMonthlyExpenses(0);
       setDreams([]);
       setFinancialEntries([]);
+      setFinanceSnapshots([]);
       setTransactionCategories([]);
       setCalendarTransactions([]);
       setReminders([]);
@@ -1542,6 +1624,7 @@ export default function App() {
     return (
       <FinanceHome
         entries={financialEntries}
+        snapshots={financeSnapshots}
         isSaving={saving}
         onAddEntry={createFinancialEntry}
         onDeleteEntry={deleteFinancialEntry}
@@ -1639,6 +1722,7 @@ function FinanceHome({
   onDeleteEntry,
   onUpdateEntry,
   setActiveTab,
+  snapshots,
 }: {
   entries: ReadonlyArray<FinancialEntry>;
   isSaving: boolean;
@@ -1655,8 +1739,10 @@ function FinanceHome({
     entryAmount: number,
   ) => Promise<boolean>;
   setActiveTab: (tab: TabKey) => void;
+  snapshots: ReadonlyArray<FinanceSnapshot>;
 }) {
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isStructureOpen, setIsStructureOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<FinancialEntry | null>(null);
   const [pendingDeleteEntry, setPendingDeleteEntry] =
     useState<FinancialEntry | null>(null);
@@ -1677,6 +1763,17 @@ function FinanceHome({
     setIsFormOpen(false);
     setEditingEntry(null);
   };
+  if (isStructureOpen)
+    return (
+      <FinanceStructureDetail
+        equityTotal={equityTotal}
+        liabilityRatio={liabilityRatio}
+        liabilityTotal={liabilityTotal}
+        onBack={() => setIsStructureOpen(false)}
+        snapshots={snapshots}
+        totalAssets={totalAssets}
+      />
+    );
   return (
     <View style={styles.container}>
       <StatusBar style="dark" />
@@ -1689,14 +1786,20 @@ function FinanceHome({
             </Text>
           </View>
         </View>
-        <View style={styles.balanceCard}>
+        <Pressable
+          accessibilityHint="查看資金結構與每月歷史變化"
+          accessibilityRole="button"
+          onPress={() => setIsStructureOpen(true)}
+          style={styles.balanceCard}
+        >
           <Donut liabilityRatio={liabilityRatio} total={totalAssets} />
           <View style={styles.balanceLegend}>
-            <Text style={styles.cardTitle}>資金來源結構</Text>
+            <Text style={styles.cardTitle}>資金結構</Text>
             <LegendRow color="#D76E62" label="總負債" value={liabilityTotal} />
             <LegendRow color="#087A50" label="總個人權益" value={equityTotal} />
           </View>
-        </View>
+          <Text style={styles.balanceCardChevron}>›</Text>
+        </Pressable>
         <FinanceSection
           title="個人權益"
           caption="你可支配的資源"
@@ -1754,6 +1857,177 @@ function FinanceHome({
     </View>
   );
 }
+function FinanceStructureDetail({
+  equityTotal,
+  liabilityRatio,
+  liabilityTotal,
+  onBack,
+  snapshots,
+  totalAssets,
+}: {
+  equityTotal: number;
+  liabilityRatio: number;
+  liabilityTotal: number;
+  onBack: () => void;
+  snapshots: ReadonlyArray<FinanceSnapshot>;
+  totalAssets: number;
+}) {
+  const currentMaximum = Math.max(liabilityTotal, equityTotal, 1);
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.financeStructureContent}>
+        <View style={styles.financeStructureHeader}>
+          <Pressable
+            accessibilityLabel="返回"
+            accessibilityRole="button"
+            onPress={onBack}
+            style={styles.financeStructureBackButton}
+          >
+            <Text style={styles.financeStructureBackIcon}>‹</Text>
+          </Pressable>
+          <Text style={styles.financeStructureTitle}>資金結構詳情</Text>
+          <View style={styles.financeStructureHeaderSpacer} />
+        </View>
+        <View style={styles.balanceCard}>
+          <Donut liabilityRatio={liabilityRatio} total={totalAssets} />
+          <View style={styles.balanceLegend}>
+            <Text style={styles.cardTitle}>資金結構</Text>
+            <LegendRow color="#D76E62" label="總負債" value={liabilityTotal} />
+            <LegendRow color="#087A50" label="總個人權益" value={equityTotal} />
+          </View>
+        </View>
+        <View style={styles.financeChartCard}>
+          <Text style={styles.financeChartTitle}>目前資金結構</Text>
+          <View style={styles.financeVerticalBars}>
+            <FinanceVerticalBar
+              color="#D76E62"
+              label="總負債"
+              maximum={currentMaximum}
+              value={liabilityTotal}
+            />
+            <FinanceVerticalBar
+              color="#087A50"
+              label="總個人權益"
+              maximum={currentMaximum}
+              value={equityTotal}
+            />
+          </View>
+        </View>
+        <View style={styles.financeHistorySection}>
+          <Text style={styles.financeChartTitle}>每月歷史變化</Text>
+          {snapshots.length === 0 ? (
+            <View style={styles.financeHistoryEmpty}>
+              <Text style={styles.financeHistoryEmptyText}>
+                尚無每月快照記錄
+              </Text>
+            </View>
+          ) : (
+            snapshots.map((snapshot) => (
+              <View
+                key={snapshot.snapshot_month}
+                style={styles.financeHistoryCard}
+              >
+                <Text style={styles.financeHistoryMonth}>
+                  {snapshotMonthLabel(snapshot.snapshot_month)}
+                </Text>
+                <FinanceHistoryStructureBar
+                  equityTotal={snapshot.equity_total}
+                  liabilityTotal={snapshot.liability_total}
+                />
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+function FinanceVerticalBar({
+  color,
+  label,
+  maximum,
+  value,
+}: {
+  color: string;
+  label: string;
+  maximum: number;
+  value: number;
+}) {
+  const height = value <= 0 ? 4 : Math.max(18, (value / maximum) * 150);
+  return (
+    <View style={styles.financeVerticalBarColumn}>
+      <View style={styles.financeVerticalBarTrack}>
+        <View
+          style={[
+            styles.financeVerticalBarFill,
+            { backgroundColor: color, height },
+          ]}
+        />
+      </View>
+      <Text style={styles.financeVerticalBarLabel}>{label}</Text>
+      <Text style={styles.financeVerticalBarValue}>{money(value)}</Text>
+    </View>
+  );
+}
+function FinanceHistoryStructureBar({
+  equityTotal,
+  liabilityTotal,
+}: {
+  equityTotal: number;
+  liabilityTotal: number;
+}) {
+  const positiveLiability = Math.max(0, liabilityTotal);
+  const positiveEquity = Math.max(0, equityTotal);
+  const totalAssets = liabilityTotal + equityTotal;
+  const chartTotal = positiveLiability + positiveEquity;
+  return (
+    <View style={styles.financeHistoryStructure}>
+      <View style={styles.financeHistoryTotalRow}>
+        <Text style={styles.financeHistoryTotalLabel}>總資產</Text>
+        <Text style={styles.financeHistoryTotalValue}>{money(totalAssets)}</Text>
+      </View>
+      <View style={styles.financeHistoryTrack}>
+        <View
+          style={styles.financeHistoryStack}
+        >
+          {positiveLiability > 0 && (
+            <View
+              style={[
+                styles.financeHistoryLiabilityFill,
+                { flex: positiveLiability / Math.max(chartTotal, 1) },
+              ]}
+            />
+          )}
+          {positiveEquity > 0 && (
+            <View
+              style={[
+                styles.financeHistoryEquityFill,
+                { flex: positiveEquity / Math.max(chartTotal, 1) },
+              ]}
+            />
+          )}
+        </View>
+      </View>
+      <View style={styles.financeHistoryValuesRow}>
+        <View style={styles.financeHistoryValueColumn}>
+          <Text style={styles.financeHistoryLiabilityLabel}>總負債</Text>
+          <Text style={styles.financeHistoryValue}>{money(liabilityTotal)}</Text>
+        </View>
+        <View
+          style={[
+            styles.financeHistoryValueColumn,
+            styles.financeHistoryEquityColumn,
+          ]}
+        >
+          <Text style={styles.financeHistoryEquityLabel}>總個人權益</Text>
+          <Text style={styles.financeHistoryValue}>{money(equityTotal)}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 function Donut({
   liabilityRatio,
   total,
@@ -6557,6 +6831,165 @@ const styles = StyleSheet.create({
     marginTop: 18,
     padding: 14,
   },
+  balanceCardChevron: {
+    color: "#8B98A8",
+    fontSize: 24,
+    marginLeft: 5,
+  },
+  financeStructureContent: {
+    padding: 24,
+    paddingBottom: 40,
+    paddingTop: 58,
+  },
+  financeStructureHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  financeStructureBackButton: {
+    alignItems: "center",
+    backgroundColor: "#F0EDE6",
+    borderRadius: 18,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  financeStructureBackIcon: {
+    color: "#087A50",
+    fontSize: 30,
+    lineHeight: 32,
+  },
+  financeStructureTitle: {
+    color: "#132442",
+    fontSize: 20,
+    fontWeight: "800",
+  },
+  financeStructureHeaderSpacer: { width: 36 },
+  financeChartCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    marginTop: 16,
+    padding: 18,
+  },
+  financeChartTitle: {
+    color: "#132442",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  financeVerticalBars: {
+    alignItems: "flex-end",
+    flexDirection: "row",
+    gap: 24,
+    justifyContent: "center",
+    marginTop: 18,
+  },
+  financeVerticalBarColumn: {
+    alignItems: "center",
+    flex: 1,
+    maxWidth: 116,
+  },
+  financeVerticalBarTrack: {
+    alignItems: "stretch",
+    backgroundColor: "#F0F3F1",
+    borderRadius: 12,
+    height: 154,
+    justifyContent: "flex-end",
+    overflow: "hidden",
+    width: 70,
+  },
+  financeVerticalBarFill: {
+    borderRadius: 12,
+    width: "100%",
+  },
+  financeVerticalBarLabel: {
+    color: "#526277",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 10,
+  },
+  financeVerticalBarValue: {
+    color: "#132442",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  financeHistorySection: { marginTop: 22 },
+  financeHistoryCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginTop: 12,
+    padding: 16,
+  },
+  financeHistoryMonth: {
+    color: "#132442",
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 13,
+  },
+  financeHistoryStructure: { marginTop: 4 },
+  financeHistoryTotalRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 7,
+  },
+  financeHistoryTotalLabel: {
+    color: "#526277",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  financeHistoryTotalValue: {
+    color: "#132442",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  financeHistoryTrack: {
+    backgroundColor: "#EEF1EF",
+    borderRadius: 6,
+    height: 16,
+    overflow: "hidden",
+  },
+  financeHistoryStack: {
+    borderRadius: 6,
+    flexDirection: "row",
+    height: "100%",
+    overflow: "hidden",
+    width: "100%",
+  },
+  financeHistoryLiabilityFill: { backgroundColor: "#D76E62" },
+  financeHistoryEquityFill: { backgroundColor: "#087A50" },
+  financeHistoryValuesRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 8,
+  },
+  financeHistoryValueColumn: { flex: 1 },
+  financeHistoryEquityColumn: { alignItems: "flex-end" },
+  financeHistoryLiabilityLabel: {
+    color: "#D76E62",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  financeHistoryEquityLabel: {
+    color: "#087A50",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  financeHistoryValue: {
+    color: "#132442",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+  financeHistoryEmpty: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginTop: 12,
+    padding: 24,
+  },
+  financeHistoryEmptyText: { color: "#718096", fontSize: 13 },
+
   donutWrap: {
     alignItems: "center",
     height: 118,
