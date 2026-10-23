@@ -1,0 +1,9 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "夢想未來記帳本",
+    "NSPhotoLibraryUsageDescription": "允許「夢想未來記帳本」存取相簿，讓你選擇大頭照與夢想圖片。"
+  },
+  "android": {
+    "app_name": "夢想未來記帳本"
+  }
+}

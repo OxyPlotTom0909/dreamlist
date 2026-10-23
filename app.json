@@ -7,7 +7,10 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -38,7 +41,20 @@
           "color": "#087A50",
           "defaultChannel": "monthly-reminders"
         }
+      ],
+      [
+        "expo-localization",
+        {
+          "supportedLocales": {
+            "ios": ["en", "zh-Hant"],
+            "android": ["en", "zh-Hant"]
+          }
+        }
       ]
-    ]
+    ],
+    "locales": {
+      "en": "./locales/en.json",
+      "zh-Hant": "./locales/zh-Hant.json"
+    }
   }
 }

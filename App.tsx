@@ -1,62 +1,167 @@
-import { StatusBar } from 'expo-status-bar';
-import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
-import * as ImagePicker from 'expo-image-picker';
-import * as Notifications from 'expo-notifications';
-import DateTimePicker, { type DateTimePickerChangeEvent } from '@react-native-community/datetimepicker';
-import { Picker } from '@react-native-picker/picker';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Alert, Animated, Image, ImageBackground, KeyboardAvoidingView, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, StatusBar as NativeStatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
-import Svg, { Circle } from 'react-native-svg';
+import { StatusBar } from "expo-status-bar";
+import { openDatabaseAsync, type SQLiteDatabase } from "expo-sqlite";
+import * as ImagePicker from "expo-image-picker";
+import * as Notifications from "expo-notifications";
+import { type DateTimePickerChangeEvent } from "@react-native-community/datetimepicker";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Image,
+  ImageBackground,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  PanResponder,
+  Platform,
+  ScrollView,
+  StatusBar as NativeStatusBar,
+  StyleSheet,
+  View,
+} from "react-native";
+import Svg, { Circle } from "react-native-svg";
+import {
+  Alert,
+  applyLanguagePreference,
+  appLanguage,
+  appLocale,
+  DateTimePicker,
+  Picker,
+  Pressable,
+  t,
+  Text,
+  TextInput,
+  type LanguagePreference,
+} from "./src/i18n";
 
-type TabKey = 'dreams' | 'finance' | 'calendar' | 'profile';
-type Step = 'welcome' | 'assets' | 'liabilities' | 'income' | 'expenses' | 'summary';
-type EntryKind = 'asset' | 'liability' | 'income' | 'expense';
+type TabKey = "dreams" | "finance" | "calendar" | "profile";
+type Step =
+  | "welcome"
+  | "assets"
+  | "liabilities"
+  | "income"
+  | "expenses"
+  | "summary";
+type EntryKind = "asset" | "liability" | "income" | "expense";
 type Item = { id: string; category: string; amount: string };
 type RecordItem = { kind: EntryKind; category: string; amount: number };
 type ProfileRow = { onboarding_complete: number };
 type AmountRow = { total: number };
-type Dream = { id: number; title: string; target_amount: number; saved_amount: number; monthly_allocation: number; image_uri: string | null; target_date: string | null; completed_at: string | null; finance_adjusted: number; calendar_entry_deleted: number };
+type Dream = {
+  id: number;
+  title: string;
+  target_amount: number;
+  saved_amount: number;
+  monthly_allocation: number;
+  image_uri: string | null;
+  target_date: string | null;
+  completed_at: string | null;
+  finance_adjusted: number;
+  calendar_entry_deleted: number;
+};
 type TableColumn = { name: string };
-type FinancialEntry = { id: number; kind: EntryKind; category: string; amount: number; day_of_month: number; note: string; color: string };
+type FinancialEntry = {
+  id: number;
+  kind: EntryKind;
+  category: string;
+  amount: number;
+  day_of_month: number;
+  note: string;
+  color: string;
+};
 type StoredProfile = { display_name: string; avatar_uri: string | null };
-type TransactionKind = 'income' | 'expense';
-type PaymentMethod = 'cash' | 'credit_card';
+type TransactionKind = "income" | "expense";
+type PaymentMethod = "cash" | "credit_card";
 type TransactionCategory = { id: number; kind: TransactionKind; name: string };
-type CalendarTransaction = { id: number; kind: TransactionKind; category: string; amount: number; note: string; occurred_at: string; payment_method: PaymentMethod | null; finance_adjusted: number; dream_id: number | null };
-type CalendarTransactionUpdate = { id: number; category: string; amount: number; note: string; occurredAt: string; paymentMethod: PaymentMethod | null };
+type CalendarTransaction = {
+  id: number;
+  kind: TransactionKind;
+  category: string;
+  amount: number;
+  note: string;
+  occurred_at: string;
+  payment_method: PaymentMethod | null;
+  finance_adjusted: number;
+  dream_id: number | null;
+};
+type CalendarTransactionUpdate = {
+  id: number;
+  category: string;
+  amount: number;
+  note: string;
+  occurredAt: string;
+  paymentMethod: PaymentMethod | null;
+};
 type AppSetting = { key: string; value: string };
-type Reminder = { id: number; item: string; title: string; body: string; day_of_month: number; hour: number; minute: number; notification_identifier: string };
-type ReminderInput = { id?: number; item: string; title: string; body: string; dayOfMonth: number; hour: number; minute: number };
-type CloudInvoiceTestStatus = 'idle' | 'valid' | 'invalid';
+type Reminder = {
+  id: number;
+  item: string;
+  title: string;
+  body: string;
+  day_of_month: number;
+  hour: number;
+  minute: number;
+  notification_identifier: string;
+};
+type ReminderInput = {
+  id?: number;
+  item: string;
+  title: string;
+  body: string;
+  dayOfMonth: number;
+  hour: number;
+  minute: number;
+};
+type CloudInvoiceTestStatus = "idle" | "valid" | "invalid";
 
-const DEFAULT_FIXED_INCOME_COLOR = '#A8DDB5';
-const DEFAULT_FIXED_EXPENSE_COLOR = '#AFCBFF';
-const MACARON_YELLOW = '#FFE8A3';
-const SYSTEM_EXPENSE_CATEGORY = '信用卡還款';
-const SYSTEM_CASH_ACCOUNT = '現金與活期存款';
-const SYSTEM_CREDIT_ACCOUNT = '信用卡';
+const DEFAULT_FIXED_INCOME_COLOR = "#A8DDB5";
+const DEFAULT_FIXED_EXPENSE_COLOR = "#AFCBFF";
+const MACARON_YELLOW = "#FFE8A3";
+const SYSTEM_EXPENSE_CATEGORY = "信用卡還款";
+const SYSTEM_CASH_ACCOUNT = "現金與活期存款";
+const SYSTEM_CREDIT_ACCOUNT = "信用卡";
 const CLOUD_INVOICE_BARCODE_PATTERN = /^\/[0-9A-Z.+-]{7}$/;
-const PRIVACY_POLICY_URL = 'https://allprivacypolicy.z31.web.core.windows.net/app/Aimmora/privacy-policy.html';
+const PRIVACY_POLICY_URL =
+  "https://allprivacypolicy.z31.web.core.windows.net/app/Aimmora/privacy-policy.html";
+
+function isLanguagePreference(value: string | undefined): value is LanguagePreference {
+  return value === "system" || value === "zh-Hant" || value === "en";
+}
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldPlaySound: true, shouldSetBadge: false, shouldShowBanner: true, shouldShowList: true }),
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
 });
 
-const databasePromise = openDatabaseAsync('my-dreams.db');
+const databasePromise = openDatabaseAsync("my-dreams.db");
 const tabs: ReadonlyArray<{ key: TabKey; label: string; icon: string }> = [
-  { key: 'dreams', label: '夢想', icon: '✦' }, { key: 'finance', label: '財務', icon: '▦' },
-  { key: 'calendar', label: '日曆', icon: '□' }, { key: 'profile', label: '我的', icon: '♙' },
+  { key: "dreams", label: "夢想", icon: "✦" },
+  { key: "finance", label: "財務", icon: "▦" },
+  { key: "calendar", label: "日曆", icon: "□" },
+  { key: "profile", label: "我的", icon: "♙" },
 ];
 const initialAssets: ReadonlyArray<Item> = [
-  { id: 'cash', category: '現金與存款', amount: '' }, { id: 'investment', category: '投資', amount: '' },
-  { id: 'property', category: '不動產', amount: '' }, { id: 'other-asset', category: '其他資產', amount: '' },
+  { id: "cash", category: "現金與存款", amount: "" },
+  { id: "investment", category: "投資", amount: "" },
+  { id: "property", category: "不動產", amount: "" },
+  { id: "other-asset", category: "其他資產", amount: "" },
 ];
 const initialLiabilities: ReadonlyArray<Item> = [
-  { id: 'credit-card', category: '信用卡負債', amount: '' }, { id: 'mortgage', category: '房貸', amount: '' },
-  { id: 'car-loan', category: '車貸', amount: '' }, { id: 'other-liability', category: '其他負債', amount: '' },
+  { id: "credit-card", category: "信用卡負債", amount: "" },
+  { id: "mortgage", category: "房貸", amount: "" },
+  { id: "car-loan", category: "車貸", amount: "" },
+  { id: "other-liability", category: "其他負債", amount: "" },
 ];
-const initialIncome: ReadonlyArray<Item> = [{ id: 'salary', category: '薪資收入', amount: '' }];
-const initialExpenses: ReadonlyArray<Item> = [{ id: 'living', category: '生活費', amount: '' }];
+const initialIncome: ReadonlyArray<Item> = [
+  { id: "salary", category: "薪資收入", amount: "" },
+];
+const initialExpenses: ReadonlyArray<Item> = [
+  { id: "living", category: "生活費", amount: "" },
+];
 
 async function database(): Promise<SQLiteDatabase> {
   const db = await databasePromise;
@@ -69,24 +174,63 @@ async function database(): Promise<SQLiteDatabase> {
     CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, day_of_month INTEGER NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL, notification_identifier TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS dreams (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, target_amount REAL NOT NULL, saved_amount REAL NOT NULL DEFAULT 0, monthly_allocation REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at TEXT, finance_adjusted INTEGER NOT NULL DEFAULT 0, calendar_entry_deleted INTEGER NOT NULL DEFAULT 0);`);
-  const categorySeed = await db.getFirstAsync<AppSetting>("SELECT key, value FROM app_settings WHERE key = 'categories_seeded'");
+  const categorySeed = await db.getFirstAsync<AppSetting>(
+    "SELECT key, value FROM app_settings WHERE key = 'categories_seeded'",
+  );
   if (!categorySeed) {
-    await db.execAsync(`INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES ('income', '薪資'), ('income', '兼職'), ('expense', '餐費'), ('expense', '卡費'), ('expense', '夢想提撥');`);
-    await db.runAsync("INSERT INTO app_settings (key, value) VALUES ('categories_seeded', '1')");
+    await db.execAsync(
+      `INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES ('income', '薪資'), ('income', '兼職'), ('expense', '餐費'), ('expense', '卡費'), ('expense', '夢想提撥');`,
+    );
+    await db.runAsync(
+      "INSERT INTO app_settings (key, value) VALUES ('categories_seeded', '1')",
+    );
   }
-  await db.runAsync("INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES ('expense', ?)", SYSTEM_EXPENSE_CATEGORY);
-  await db.runAsync('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)', 'fixed_income_color', DEFAULT_FIXED_INCOME_COLOR);
-  await db.runAsync('INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)', 'fixed_expense_color', DEFAULT_FIXED_EXPENSE_COLOR);
-  const dreamColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(dreams)');
-  if (!dreamColumns.some((column) => column.name === 'image_uri')) await db.execAsync('ALTER TABLE dreams ADD COLUMN image_uri TEXT');
-  if (!dreamColumns.some((column) => column.name === 'target_date')) await db.execAsync('ALTER TABLE dreams ADD COLUMN target_date TEXT');
-  if (!dreamColumns.some((column) => column.name === 'completed_at')) await db.execAsync('ALTER TABLE dreams ADD COLUMN completed_at TEXT');
-  if (!dreamColumns.some((column) => column.name === 'finance_adjusted')) await db.execAsync('ALTER TABLE dreams ADD COLUMN finance_adjusted INTEGER NOT NULL DEFAULT 0');
-  if (!dreamColumns.some((column) => column.name === 'calendar_entry_deleted')) await db.execAsync('ALTER TABLE dreams ADD COLUMN calendar_entry_deleted INTEGER NOT NULL DEFAULT 0');
-  const transactionColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(calendar_transactions)');
-  if (!transactionColumns.some((column) => column.name === 'payment_method')) await db.execAsync('ALTER TABLE calendar_transactions ADD COLUMN payment_method TEXT');
-  if (!transactionColumns.some((column) => column.name === 'finance_adjusted')) await db.execAsync('ALTER TABLE calendar_transactions ADD COLUMN finance_adjusted INTEGER NOT NULL DEFAULT 0');
-  if (!transactionColumns.some((column) => column.name === 'dream_id')) await db.execAsync('ALTER TABLE calendar_transactions ADD COLUMN dream_id INTEGER');
+  await db.runAsync(
+    "INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES ('expense', ?)",
+    SYSTEM_EXPENSE_CATEGORY,
+  );
+  await db.runAsync(
+    "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+    "fixed_income_color",
+    DEFAULT_FIXED_INCOME_COLOR,
+  );
+  await db.runAsync(
+    "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+    "fixed_expense_color",
+    DEFAULT_FIXED_EXPENSE_COLOR,
+  );
+  const dreamColumns = await db.getAllAsync<TableColumn>(
+    "PRAGMA table_info(dreams)",
+  );
+  if (!dreamColumns.some((column) => column.name === "image_uri"))
+    await db.execAsync("ALTER TABLE dreams ADD COLUMN image_uri TEXT");
+  if (!dreamColumns.some((column) => column.name === "target_date"))
+    await db.execAsync("ALTER TABLE dreams ADD COLUMN target_date TEXT");
+  if (!dreamColumns.some((column) => column.name === "completed_at"))
+    await db.execAsync("ALTER TABLE dreams ADD COLUMN completed_at TEXT");
+  if (!dreamColumns.some((column) => column.name === "finance_adjusted"))
+    await db.execAsync(
+      "ALTER TABLE dreams ADD COLUMN finance_adjusted INTEGER NOT NULL DEFAULT 0",
+    );
+  if (!dreamColumns.some((column) => column.name === "calendar_entry_deleted"))
+    await db.execAsync(
+      "ALTER TABLE dreams ADD COLUMN calendar_entry_deleted INTEGER NOT NULL DEFAULT 0",
+    );
+  const transactionColumns = await db.getAllAsync<TableColumn>(
+    "PRAGMA table_info(calendar_transactions)",
+  );
+  if (!transactionColumns.some((column) => column.name === "payment_method"))
+    await db.execAsync(
+      "ALTER TABLE calendar_transactions ADD COLUMN payment_method TEXT",
+    );
+  if (!transactionColumns.some((column) => column.name === "finance_adjusted"))
+    await db.execAsync(
+      "ALTER TABLE calendar_transactions ADD COLUMN finance_adjusted INTEGER NOT NULL DEFAULT 0",
+    );
+  if (!transactionColumns.some((column) => column.name === "dream_id"))
+    await db.execAsync(
+      "ALTER TABLE calendar_transactions ADD COLUMN dream_id INTEGER",
+    );
   await db.execAsync(`UPDATE calendar_transactions
     SET finance_adjusted = 1,
         dream_id = (SELECT dream.id FROM dreams AS dream WHERE dream.completed_at = calendar_transactions.occurred_at AND dream.title = calendar_transactions.note AND dream.target_amount = calendar_transactions.amount LIMIT 1)
@@ -110,124 +254,244 @@ async function database(): Promise<SQLiteDatabase> {
           AND transaction_record.note = dream.title
           AND transaction_record.occurred_at = dream.completed_at
       );`);
-  const profileColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(profile)');
-  if (!profileColumns.some((column) => column.name === 'avatar_uri')) await db.execAsync('ALTER TABLE profile ADD COLUMN avatar_uri TEXT');
-  const entryColumns = await db.getAllAsync<TableColumn>('PRAGMA table_info(financial_entries)');
-  if (!entryColumns.some((column) => column.name === 'day_of_month')) {
-    await db.execAsync('ALTER TABLE financial_entries ADD COLUMN day_of_month INTEGER NOT NULL DEFAULT 5');
-    await db.execAsync("UPDATE financial_entries SET day_of_month = 10 WHERE kind = 'expense'");
+  const profileColumns = await db.getAllAsync<TableColumn>(
+    "PRAGMA table_info(profile)",
+  );
+  if (!profileColumns.some((column) => column.name === "avatar_uri"))
+    await db.execAsync("ALTER TABLE profile ADD COLUMN avatar_uri TEXT");
+  const entryColumns = await db.getAllAsync<TableColumn>(
+    "PRAGMA table_info(financial_entries)",
+  );
+  if (!entryColumns.some((column) => column.name === "day_of_month")) {
+    await db.execAsync(
+      "ALTER TABLE financial_entries ADD COLUMN day_of_month INTEGER NOT NULL DEFAULT 5",
+    );
+    await db.execAsync(
+      "UPDATE financial_entries SET day_of_month = 10 WHERE kind = 'expense'",
+    );
   }
-  if (!entryColumns.some((column) => column.name === 'note')) await db.execAsync("ALTER TABLE financial_entries ADD COLUMN note TEXT NOT NULL DEFAULT ''");
-  if (!entryColumns.some((column) => column.name === 'color')) {
-    await db.execAsync(`ALTER TABLE financial_entries ADD COLUMN color TEXT NOT NULL DEFAULT '${DEFAULT_FIXED_INCOME_COLOR}'`);
-    await db.runAsync("UPDATE financial_entries SET color = ? WHERE kind = 'expense'", DEFAULT_FIXED_EXPENSE_COLOR);
+  if (!entryColumns.some((column) => column.name === "note"))
+    await db.execAsync(
+      "ALTER TABLE financial_entries ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+    );
+  if (!entryColumns.some((column) => column.name === "color")) {
+    await db.execAsync(
+      `ALTER TABLE financial_entries ADD COLUMN color TEXT NOT NULL DEFAULT '${DEFAULT_FIXED_INCOME_COLOR}'`,
+    );
+    await db.runAsync(
+      "UPDATE financial_entries SET color = ? WHERE kind = 'expense'",
+      DEFAULT_FIXED_EXPENSE_COLOR,
+    );
   }
-  const financeAccounts = await db.getAllAsync<FinancialEntry>('SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY id ASC');
-  const cashAccount = financeAccounts.find((entry) => isPaymentAccount(entry, 'cash'));
-  const creditAccount = financeAccounts.find((entry) => isPaymentAccount(entry, 'credit_card'));
-  if (cashAccount) await db.runAsync('UPDATE financial_entries SET category = ? WHERE id = ?', SYSTEM_CASH_ACCOUNT, cashAccount.id);
-  else await db.runAsync("INSERT INTO financial_entries (kind, category, amount) VALUES ('asset', ?, 0)", SYSTEM_CASH_ACCOUNT);
-  if (creditAccount) await db.runAsync('UPDATE financial_entries SET category = ? WHERE id = ?', SYSTEM_CREDIT_ACCOUNT, creditAccount.id);
-  else await db.runAsync("INSERT INTO financial_entries (kind, category, amount) VALUES ('liability', ?, 0)", SYSTEM_CREDIT_ACCOUNT);
-  const dreamFinanceBackfill = await db.getFirstAsync<AppSetting>("SELECT key, value FROM app_settings WHERE key = 'dream_expense_finance_backfill_v1'");
+  const financeAccounts = await db.getAllAsync<FinancialEntry>(
+    "SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY id ASC",
+  );
+  const cashAccount = financeAccounts.find((entry) =>
+    isPaymentAccount(entry, "cash"),
+  );
+  const creditAccount = financeAccounts.find((entry) =>
+    isPaymentAccount(entry, "credit_card"),
+  );
+  if (cashAccount)
+    await db.runAsync(
+      "UPDATE financial_entries SET category = ? WHERE id = ?",
+      SYSTEM_CASH_ACCOUNT,
+      cashAccount.id,
+    );
+  else
+    await db.runAsync(
+      "INSERT INTO financial_entries (kind, category, amount) VALUES ('asset', ?, 0)",
+      SYSTEM_CASH_ACCOUNT,
+    );
+  if (creditAccount)
+    await db.runAsync(
+      "UPDATE financial_entries SET category = ? WHERE id = ?",
+      SYSTEM_CREDIT_ACCOUNT,
+      creditAccount.id,
+    );
+  else
+    await db.runAsync(
+      "INSERT INTO financial_entries (kind, category, amount) VALUES ('liability', ?, 0)",
+      SYSTEM_CREDIT_ACCOUNT,
+    );
+  const dreamFinanceBackfill = await db.getFirstAsync<AppSetting>(
+    "SELECT key, value FROM app_settings WHERE key = 'dream_expense_finance_backfill_v1'",
+  );
   if (!dreamFinanceBackfill) {
-    const unsyncedDreams = await db.getAllAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE completed_at IS NOT NULL AND finance_adjusted = 0 AND calendar_entry_deleted = 0 ORDER BY id ASC');
+    const unsyncedDreams = await db.getAllAsync<Dream>(
+      "SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE completed_at IS NOT NULL AND finance_adjusted = 0 AND calendar_entry_deleted = 0 ORDER BY id ASC",
+    );
     await db.withTransactionAsync(async (): Promise<void> => {
       for (const dream of unsyncedDreams) {
-        await adjustPaymentAccount(db, 'cash', dream.target_amount);
-        await db.runAsync('UPDATE dreams SET finance_adjusted = 1 WHERE id = ?', dream.id);
-        await db.runAsync("UPDATE calendar_transactions SET finance_adjusted = 1 WHERE kind = 'expense' AND category = '夢想提撥' AND amount = ? AND note = ? AND occurred_at = ?", dream.target_amount, dream.title, dream.completed_at);
+        await adjustPaymentAccount(db, "cash", dream.target_amount);
+        await db.runAsync(
+          "UPDATE dreams SET finance_adjusted = 1 WHERE id = ?",
+          dream.id,
+        );
+        await db.runAsync(
+          "UPDATE calendar_transactions SET finance_adjusted = 1 WHERE kind = 'expense' AND category = '夢想提撥' AND amount = ? AND note = ? AND occurred_at = ?",
+          dream.target_amount,
+          dream.title,
+          dream.completed_at,
+        );
       }
-      await db.runAsync("INSERT INTO app_settings (key, value) VALUES ('dream_expense_finance_backfill_v1', '1')");
+      await db.runAsync(
+        "INSERT INTO app_settings (key, value) VALUES ('dream_expense_finance_backfill_v1', '1')",
+      );
     });
   }
   return db;
 }
 function amount(value: string): number | null {
-  const normalized = value.replace(/,/g, '').trim();
-  if (normalized === '') return 0;
+  const normalized = value.replace(/,/g, "").trim();
+  if (normalized === "") return 0;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 function formatAmountInput(value: string): string {
-  const digits = value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '');
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const digits = value.replace(/[^0-9]/g, "").replace(/^0+(?=\d)/, "");
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 function formatDecimalInput(value: string): string {
-  const cleaned = value.replace(/[^0-9.]/g, '');
-  const [integer = '', ...decimalParts] = cleaned.split('.');
-  const normalizedInteger = integer.replace(/^0+(?=\d)/, '');
-  return decimalParts.length === 0 ? normalizedInteger : `${normalizedInteger}.${decimalParts.join('').slice(0, 2)}`;
+  const cleaned = value.replace(/[^0-9.]/g, "");
+  const [integer = "", ...decimalParts] = cleaned.split(".");
+  const normalizedInteger = integer.replace(/^0+(?=\d)/, "");
+  return decimalParts.length === 0
+    ? normalizedInteger
+    : `${normalizedInteger}.${decimalParts.join("").slice(0, 2)}`;
 }
 function normalizedFinanceName(value: string): string {
-  return value.toLocaleLowerCase().replace(/[\s_-]/g, '');
+  return value.toLocaleLowerCase().replace(/[\s_-]/g, "");
 }
-function isPaymentAccount(entry: FinancialEntry, paymentMethod: PaymentMethod): boolean {
+function isPaymentAccount(
+  entry: FinancialEntry,
+  paymentMethod: PaymentMethod,
+): boolean {
   const name = normalizedFinanceName(entry.category);
-  return paymentMethod === 'cash'
-    ? entry.kind === 'asset' && ['現金', '現款', 'cash'].some((keyword) => name.includes(keyword))
-    : entry.kind === 'liability' && ['信用卡', 'creditcard'].some((keyword) => name.includes(keyword));
+  return paymentMethod === "cash"
+    ? entry.kind === "asset" &&
+        ["現金", "現款", "cash"].some((keyword) => name.includes(keyword))
+    : entry.kind === "liability" &&
+        ["信用卡", "creditcard"].some((keyword) => name.includes(keyword));
 }
-async function adjustPaymentAccount(db: SQLiteDatabase, paymentMethod: PaymentMethod, expenseDelta: number, createIfMissing = true): Promise<void> {
-  const financeEntries = await db.getAllAsync<FinancialEntry>('SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY id ASC');
-  const paymentAccount = financeEntries.find((entry) => isPaymentAccount(entry, paymentMethod));
+async function adjustPaymentAccount(
+  db: SQLiteDatabase,
+  paymentMethod: PaymentMethod,
+  expenseDelta: number,
+  createIfMissing = true,
+): Promise<void> {
+  const financeEntries = await db.getAllAsync<FinancialEntry>(
+    "SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY id ASC",
+  );
+  const paymentAccount = financeEntries.find((entry) =>
+    isPaymentAccount(entry, paymentMethod),
+  );
   if (paymentAccount) {
-    const nextAmount = paymentMethod === 'cash' ? paymentAccount.amount - expenseDelta : paymentAccount.amount + expenseDelta;
-    await db.runAsync('UPDATE financial_entries SET amount = ? WHERE id = ?', nextAmount, paymentAccount.id);
+    const nextAmount =
+      paymentMethod === "cash"
+        ? paymentAccount.amount - expenseDelta
+        : paymentAccount.amount + expenseDelta;
+    await db.runAsync(
+      "UPDATE financial_entries SET amount = ? WHERE id = ?",
+      nextAmount,
+      paymentAccount.id,
+    );
     return;
   }
   if (createIfMissing && expenseDelta !== 0) {
-    await db.runAsync('INSERT INTO financial_entries (kind, category, amount) VALUES (?, ?, ?)', paymentMethod === 'cash' ? 'asset' : 'liability', paymentMethod === 'cash' ? '現金' : '信用卡', paymentMethod === 'cash' ? -expenseDelta : expenseDelta);
+    await db.runAsync(
+      "INSERT INTO financial_entries (kind, category, amount) VALUES (?, ?, ?)",
+      paymentMethod === "cash" ? "asset" : "liability",
+      paymentMethod === "cash" ? "現金" : "信用卡",
+      paymentMethod === "cash" ? -expenseDelta : expenseDelta,
+    );
   }
 }
 function isCreditCardRepayment(category: string): boolean {
-  return normalizedFinanceName(category) === normalizedFinanceName(SYSTEM_EXPENSE_CATEGORY);
+  return (
+    normalizedFinanceName(category) ===
+    normalizedFinanceName(SYSTEM_EXPENSE_CATEGORY)
+  );
 }
 function isSystemFinancialEntry(entry: FinancialEntry): boolean {
-  return (entry.kind === 'asset' && entry.category === SYSTEM_CASH_ACCOUNT)
-    || (entry.kind === 'liability' && entry.category === SYSTEM_CREDIT_ACCOUNT);
+  return (
+    (entry.kind === "asset" && entry.category === SYSTEM_CASH_ACCOUNT) ||
+    (entry.kind === "liability" && entry.category === SYSTEM_CREDIT_ACCOUNT)
+  );
 }
-async function applyCalendarFinancialImpact(db: SQLiteDatabase, kind: TransactionKind, category: string, transactionAmount: number, paymentMethod: PaymentMethod | null, direction: 1 | -1): Promise<void> {
+async function applyCalendarFinancialImpact(
+  db: SQLiteDatabase,
+  kind: TransactionKind,
+  category: string,
+  transactionAmount: number,
+  paymentMethod: PaymentMethod | null,
+  direction: 1 | -1,
+): Promise<void> {
   const signedAmount = transactionAmount * direction;
-  if (kind === 'income') {
-    await adjustPaymentAccount(db, 'cash', -signedAmount);
+  if (kind === "income") {
+    await adjustPaymentAccount(db, "cash", -signedAmount);
     return;
   }
   if (isCreditCardRepayment(category)) {
-    await adjustPaymentAccount(db, 'cash', signedAmount);
-    await adjustPaymentAccount(db, 'credit_card', -signedAmount, false);
+    await adjustPaymentAccount(db, "cash", signedAmount);
+    await adjustPaymentAccount(db, "credit_card", -signedAmount, false);
     return;
   }
-  if (paymentMethod !== null) await adjustPaymentAccount(db, paymentMethod, signedAmount);
+  if (paymentMethod !== null)
+    await adjustPaymentAccount(db, paymentMethod, signedAmount);
 }
 function preciseMoney(value: number): string {
-  return `NT$${value.toLocaleString('zh-TW', { maximumFractionDigits: 2, minimumFractionDigits: value % 1 === 0 ? 0 : 2 })}`;
+  return `NT$${value.toLocaleString(appLocale, { maximumFractionDigits: 2, minimumFractionDigits: value % 1 === 0 ? 0 : 2 })}`;
 }
 function dateStorageValue(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
 }
 function dateDisplayValue(value: string): string {
-  const [year, month, day] = value.split('-').map(Number);
-  return `${year} 年 ${month} 月 ${day} 日`;
+  const [year, month, day] = value.split("-").map(Number);
+  if (appLanguage === "zh-Hant") return `${year} 年 ${month} 月 ${day} 日`;
+  return new Date(year, month - 1, day).toLocaleDateString(appLocale, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 function dateFromStorage(value: string): Date {
-  const [year, month, day] = value.split('-').map(Number);
+  const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
 }
 function startOfToday(): Date {
   const today = new Date();
   return new Date(today.getFullYear(), today.getMonth(), today.getDate());
 }
-function total(items: ReadonlyArray<Item>): number { return items.reduce((sum, item) => sum + (amount(item.amount) ?? 0), 0); }
-function money(value: number): string { return 'NT$' + Math.round(value).toLocaleString('zh-TW'); }
-function valid(items: ReadonlyArray<Item>): boolean { return items.every((item) => item.category.trim() !== '' && amount(item.amount) !== null); }
-function fillEmptyAmountsWithZero(items: ReadonlyArray<Item>): ReadonlyArray<Item> {
-  return items.map((item) => ({ ...item, amount: item.amount.trim() === '' ? '0' : item.amount }));
+function total(items: ReadonlyArray<Item>): number {
+  return items.reduce((sum, item) => sum + (amount(item.amount) ?? 0), 0);
 }
-async function readAmountTotal(db: SQLiteDatabase, kind: 'income' | 'expense'): Promise<number> {
-  const row = await db.getFirstAsync<AmountRow>('SELECT COALESCE(SUM(amount), 0) AS total FROM financial_entries WHERE kind = ?', kind);
+function money(value: number): string {
+  return "NT$" + Math.round(value).toLocaleString(appLocale);
+}
+function valid(items: ReadonlyArray<Item>): boolean {
+  return items.every(
+    (item) => item.category.trim() !== "" && amount(item.amount) !== null,
+  );
+}
+function fillEmptyAmountsWithZero(
+  items: ReadonlyArray<Item>,
+): ReadonlyArray<Item> {
+  return items.map((item) => ({
+    ...item,
+    amount: item.amount.trim() === "" ? "0" : item.amount,
+  }));
+}
+async function readAmountTotal(
+  db: SQLiteDatabase,
+  kind: "income" | "expense",
+): Promise<number> {
+  const row = await db.getFirstAsync<AmountRow>(
+    "SELECT COALESCE(SUM(amount), 0) AS total FROM financial_entries WHERE kind = ?",
+    kind,
+  );
   return row?.total ?? 0;
 }
 
@@ -235,54 +499,102 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [complete, setComplete] = useState(false);
-  const [step, setStep] = useState<Step>('welcome');
-  const [activeTab, setActiveTab] = useState<TabKey>('dreams');
+  const [step, setStep] = useState<Step>("welcome");
+  const [activeTab, setActiveTab] = useState<TabKey>("dreams");
   const [assets, setAssets] = useState<ReadonlyArray<Item>>(initialAssets);
-  const [liabilities, setLiabilities] = useState<ReadonlyArray<Item>>(initialLiabilities);
+  const [liabilities, setLiabilities] =
+    useState<ReadonlyArray<Item>>(initialLiabilities);
   const [income, setIncome] = useState<ReadonlyArray<Item>>(initialIncome);
-  const [expenses, setExpenses] = useState<ReadonlyArray<Item>>(initialExpenses);
+  const [expenses, setExpenses] =
+    useState<ReadonlyArray<Item>>(initialExpenses);
   const [monthlyIncome, setMonthlyIncome] = useState(0);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const [dreams, setDreams] = useState<ReadonlyArray<Dream>>([]);
-  const [financialEntries, setFinancialEntries] = useState<ReadonlyArray<FinancialEntry>>([]);
-  const [transactionCategories, setTransactionCategories] = useState<ReadonlyArray<TransactionCategory>>([]);
-  const [calendarTransactions, setCalendarTransactions] = useState<ReadonlyArray<CalendarTransaction>>([]);
+  const [financialEntries, setFinancialEntries] = useState<
+    ReadonlyArray<FinancialEntry>
+  >([]);
+  const [transactionCategories, setTransactionCategories] = useState<
+    ReadonlyArray<TransactionCategory>
+  >([]);
+  const [calendarTransactions, setCalendarTransactions] = useState<
+    ReadonlyArray<CalendarTransaction>
+  >([]);
   const [reminders, setReminders] = useState<ReadonlyArray<Reminder>>([]);
-  const [fixedIncomeColor, setFixedIncomeColor] = useState(DEFAULT_FIXED_INCOME_COLOR);
-  const [fixedExpenseColor, setFixedExpenseColor] = useState(DEFAULT_FIXED_EXPENSE_COLOR);
-  const [displayName, setDisplayName] = useState('使用者');
+  const [fixedIncomeColor, setFixedIncomeColor] = useState(
+    DEFAULT_FIXED_INCOME_COLOR,
+  );
+  const [fixedExpenseColor, setFixedExpenseColor] = useState(
+    DEFAULT_FIXED_EXPENSE_COLOR,
+  );
+  const [displayName, setDisplayName] = useState("使用者");
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [cloudInvoiceBarcode, setCloudInvoiceBarcode] = useState('');
+  const [cloudInvoiceBarcode, setCloudInvoiceBarcode] = useState("");
+  const [languagePreference, setLanguagePreference] = useState<LanguagePreference>("system");
   const [isDreamFormOpen, setIsDreamFormOpen] = useState(false);
-  const [dreamTitle, setDreamTitle] = useState('');
-  const [dreamTarget, setDreamTarget] = useState('');
-  const [dreamAllocation, setDreamAllocation] = useState('');
+  const [dreamTitle, setDreamTitle] = useState("");
+  const [dreamTarget, setDreamTarget] = useState("");
+  const [dreamAllocation, setDreamAllocation] = useState("");
   const [dreamImageUri, setDreamImageUri] = useState<string | null>(null);
-  const [dreamTargetDate, setDreamTargetDate] = useState('');
+  const [dreamTargetDate, setDreamTargetDate] = useState("");
 
   const loadDreamDashboard = async (db: SQLiteDatabase): Promise<void> => {
-    const [incomeTotal, expenseTotal, storedDreams, storedEntries, storedProfile, storedCategories, storedTransactions, storedSettings, storedReminders] = await Promise.all([
-      readAmountTotal(db, 'income'),
-      readAmountTotal(db, 'expense'),
-      db.getAllAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams ORDER BY created_at ASC'),
-      db.getAllAsync<FinancialEntry>(`SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY CASE WHEN kind = 'asset' AND category = '${SYSTEM_CASH_ACCOUNT}' THEN 0 WHEN kind = 'liability' AND category = '${SYSTEM_CREDIT_ACCOUNT}' THEN 0 ELSE 1 END, id ASC`),
-      db.getFirstAsync<StoredProfile>('SELECT display_name, avatar_uri FROM profile WHERE id = 1'),
-      db.getAllAsync<TransactionCategory>(`SELECT id, kind, name FROM transaction_categories ORDER BY CASE WHEN kind = 'expense' AND name = '${SYSTEM_EXPENSE_CATEGORY}' THEN 0 ELSE 1 END, id ASC`),
-      db.getAllAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions ORDER BY occurred_at DESC, id DESC'),
-      db.getAllAsync<AppSetting>('SELECT key, value FROM app_settings'),
-      db.getAllAsync<Reminder>('SELECT id, item, title, body, day_of_month, hour, minute, notification_identifier FROM reminders ORDER BY id ASC'),
+    const [
+      incomeTotal,
+      expenseTotal,
+      storedDreams,
+      storedEntries,
+      storedProfile,
+      storedCategories,
+      storedTransactions,
+      storedSettings,
+      storedReminders,
+    ] = await Promise.all([
+      readAmountTotal(db, "income"),
+      readAmountTotal(db, "expense"),
+      db.getAllAsync<Dream>(
+        "SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams ORDER BY created_at ASC",
+      ),
+      db.getAllAsync<FinancialEntry>(
+        `SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries ORDER BY CASE WHEN kind = 'asset' AND category = '${SYSTEM_CASH_ACCOUNT}' THEN 0 WHEN kind = 'liability' AND category = '${SYSTEM_CREDIT_ACCOUNT}' THEN 0 ELSE 1 END, id ASC`,
+      ),
+      db.getFirstAsync<StoredProfile>(
+        "SELECT display_name, avatar_uri FROM profile WHERE id = 1",
+      ),
+      db.getAllAsync<TransactionCategory>(
+        `SELECT id, kind, name FROM transaction_categories ORDER BY CASE WHEN kind = 'expense' AND name = '${SYSTEM_EXPENSE_CATEGORY}' THEN 0 ELSE 1 END, id ASC`,
+      ),
+      db.getAllAsync<CalendarTransaction>(
+        "SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions ORDER BY occurred_at DESC, id DESC",
+      ),
+      db.getAllAsync<AppSetting>("SELECT key, value FROM app_settings"),
+      db.getAllAsync<Reminder>(
+        "SELECT id, item, title, body, day_of_month, hour, minute, notification_identifier FROM reminders ORDER BY id ASC",
+      ),
     ]);
     setMonthlyIncome(incomeTotal);
     setMonthlyExpenses(expenseTotal);
     setDreams(storedDreams);
     setFinancialEntries(storedEntries);
-    setDisplayName(storedProfile?.display_name ?? '使用者');
+    setDisplayName(storedProfile?.display_name ?? "使用者");
     setAvatarUri(storedProfile?.avatar_uri ?? null);
-    setCloudInvoiceBarcode(storedSettings.find((setting) => setting.key === 'cloud_invoice_barcode')?.value ?? '');
+    setCloudInvoiceBarcode(
+      storedSettings.find((setting) => setting.key === "cloud_invoice_barcode")
+        ?.value ?? "",
+    );
+    const storedLanguage = storedSettings.find((setting) => setting.key === "language_preference")?.value;
+    const nextLanguagePreference: LanguagePreference = isLanguagePreference(storedLanguage) ? storedLanguage : "system";
+    applyLanguagePreference(nextLanguagePreference);
+    setLanguagePreference(nextLanguagePreference);
     setTransactionCategories(storedCategories);
     setCalendarTransactions(storedTransactions);
-    setFixedIncomeColor(storedSettings.find((setting) => setting.key === 'fixed_income_color')?.value ?? DEFAULT_FIXED_INCOME_COLOR);
-    setFixedExpenseColor(storedSettings.find((setting) => setting.key === 'fixed_expense_color')?.value ?? DEFAULT_FIXED_EXPENSE_COLOR);
+    setFixedIncomeColor(
+      storedSettings.find((setting) => setting.key === "fixed_income_color")
+        ?.value ?? DEFAULT_FIXED_INCOME_COLOR,
+    );
+    setFixedExpenseColor(
+      storedSettings.find((setting) => setting.key === "fixed_expense_color")
+        ?.value ?? DEFAULT_FIXED_EXPENSE_COLOR,
+    );
     setReminders(storedReminders);
   };
 
@@ -291,103 +603,201 @@ export default function App() {
     const load = async (): Promise<void> => {
       try {
         const db = await database();
-        const profile = await db.getFirstAsync<ProfileRow>('SELECT onboarding_complete FROM profile WHERE id = 1');
+        const profile = await db.getFirstAsync<ProfileRow>(
+          "SELECT onboarding_complete FROM profile WHERE id = 1",
+        );
         if (mounted && profile?.onboarding_complete === 1) {
           await loadDreamDashboard(db);
           setComplete(true);
         }
-      } catch { if (mounted) Alert.alert('暫時無法讀取資料', '請重新開啟 App 後再試一次。'); }
-      finally { if (mounted) setLoading(false); }
+      } catch {
+        if (mounted)
+          Alert.alert("暫時無法讀取資料", "請重新開啟 App 後再試一次。");
+      } finally {
+        if (mounted) setLoading(false);
+      }
     };
     void load();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const update = (kind: EntryKind, id: string, field: 'category' | 'amount', value: string): void => {
-    const shouldFormatAmount = (kind === 'asset' || kind === 'liability' || kind === 'income' || kind === 'expense') && field === 'amount';
+  const update = (
+    kind: EntryKind,
+    id: string,
+    field: "category" | "amount",
+    value: string,
+  ): void => {
+    const shouldFormatAmount =
+      (kind === "asset" ||
+        kind === "liability" ||
+        kind === "income" ||
+        kind === "expense") &&
+      field === "amount";
     const nextValue = shouldFormatAmount ? formatAmountInput(value) : value;
-    const updateItems = (items: ReadonlyArray<Item>): ReadonlyArray<Item> => items.map((item) => item.id === id ? { ...item, [field]: nextValue } : item);
-    if (kind === 'asset') setAssets(updateItems);
-    if (kind === 'liability') setLiabilities(updateItems);
-    if (kind === 'income') setIncome(updateItems);
-    if (kind === 'expense') setExpenses(updateItems);
+    const updateItems = (items: ReadonlyArray<Item>): ReadonlyArray<Item> =>
+      items.map((item) =>
+        item.id === id ? { ...item, [field]: nextValue } : item,
+      );
+    if (kind === "asset") setAssets(updateItems);
+    if (kind === "liability") setLiabilities(updateItems);
+    if (kind === "income") setIncome(updateItems);
+    if (kind === "expense") setExpenses(updateItems);
   };
-  const add = (kind: 'income' | 'expense'): void => {
-    const currentItems = kind === 'income' ? income : expenses;
+  const add = (kind: "income" | "expense"): void => {
+    const currentItems = kind === "income" ? income : expenses;
     if (currentItems.length >= 10) {
-      Alert.alert(`最多 10 個${kind === 'income' ? '收入' : '支出'}項目`, '如需調整，請修改既有的分類或金額。');
+      Alert.alert(
+        `最多 10 個${kind === "income" ? "收入" : "支出"}項目`,
+        "如需調整，請修改既有的分類或金額。",
+      );
       return;
     }
-    const item: Item = { id: kind + '-' + Date.now(), category: '', amount: '' };
-    if (kind === 'income') setIncome((items) => [...items, item]);
+    const item: Item = {
+      id: kind + "-" + Date.now(),
+      category: "",
+      amount: "",
+    };
+    if (kind === "income") setIncome((items) => [...items, item]);
     else setExpenses((items) => [...items, item]);
   };
   const next = (target: Step, items: ReadonlyArray<Item>): void => {
-    if (!valid(items)) { Alert.alert('請確認輸入內容', '每個項目都需填寫分類，金額請填入 0 或正確數字。'); return; }
-    if (target === 'liabilities') setAssets(fillEmptyAmountsWithZero(items));
-    if (target === 'income') setLiabilities(fillEmptyAmountsWithZero(items));
-    if (target === 'expenses') setIncome(fillEmptyAmountsWithZero(items));
+    if (!valid(items)) {
+      Alert.alert(
+        "請確認輸入內容",
+        "每個項目都需填寫分類，金額請填入 0 或正確數字。",
+      );
+      return;
+    }
+    if (target === "liabilities") setAssets(fillEmptyAmountsWithZero(items));
+    if (target === "income") setLiabilities(fillEmptyAmountsWithZero(items));
+    if (target === "expenses") setIncome(fillEmptyAmountsWithZero(items));
     setStep(target);
   };
   const save = async (): Promise<void> => {
-    if (!valid(expenses)) { Alert.alert('請確認輸入內容', '每個支出項目都需填寫分類，金額請填入 0 或正確數字。'); return; }
+    if (!valid(expenses)) {
+      Alert.alert(
+        "請確認輸入內容",
+        "每個支出項目都需填寫分類，金額請填入 0 或正確數字。",
+      );
+      return;
+    }
     const records: ReadonlyArray<RecordItem> = [
-      ...assets.map((item) => ({ kind: 'asset' as const, category: item.category.trim(), amount: amount(item.amount) ?? 0 })),
-      ...liabilities.map((item) => ({ kind: 'liability' as const, category: item.category.trim(), amount: amount(item.amount) ?? 0 })),
-      ...income.map((item) => ({ kind: 'income' as const, category: item.category.trim(), amount: amount(item.amount) ?? 0 })),
-      ...expenses.map((item) => ({ kind: 'expense' as const, category: item.category.trim(), amount: amount(item.amount) ?? 0 })),
+      ...assets.map((item) => ({
+        kind: "asset" as const,
+        category: item.category.trim(),
+        amount: amount(item.amount) ?? 0,
+      })),
+      ...liabilities.map((item) => ({
+        kind: "liability" as const,
+        category: item.category.trim(),
+        amount: amount(item.amount) ?? 0,
+      })),
+      ...income.map((item) => ({
+        kind: "income" as const,
+        category: item.category.trim(),
+        amount: amount(item.amount) ?? 0,
+      })),
+      ...expenses.map((item) => ({
+        kind: "expense" as const,
+        category: item.category.trim(),
+        amount: amount(item.amount) ?? 0,
+      })),
     ];
     setSaving(true);
     try {
       const db = await database();
       await db.withTransactionAsync(async (): Promise<void> => {
-        await db.runAsync(`INSERT INTO profile (id, display_name, monthly_income, onboarding_complete) VALUES (1, '使用者', ?, 0) ON CONFLICT(id) DO UPDATE SET monthly_income = excluded.monthly_income, onboarding_complete = 0`, total(income));
-        await db.runAsync('DELETE FROM financial_entries');
+        await db.runAsync(
+          `INSERT INTO profile (id, display_name, monthly_income, onboarding_complete) VALUES (1, '使用者', ?, 0) ON CONFLICT(id) DO UPDATE SET monthly_income = excluded.monthly_income, onboarding_complete = 0`,
+          total(income),
+        );
+        await db.runAsync("DELETE FROM financial_entries");
         for (const record of records) {
-          const isExpense = record.kind === 'expense';
-          await db.runAsync('INSERT INTO financial_entries (kind, category, amount, day_of_month, note, color) VALUES (?, ?, ?, ?, ?, ?)', record.kind, record.category, record.amount, isExpense ? 10 : 5, '', isExpense ? DEFAULT_FIXED_EXPENSE_COLOR : DEFAULT_FIXED_INCOME_COLOR);
+          const isExpense = record.kind === "expense";
+          await db.runAsync(
+            "INSERT INTO financial_entries (kind, category, amount, day_of_month, note, color) VALUES (?, ?, ?, ?, ?, ?)",
+            record.kind,
+            record.category,
+            record.amount,
+            isExpense ? 10 : 5,
+            "",
+            isExpense
+              ? DEFAULT_FIXED_EXPENSE_COLOR
+              : DEFAULT_FIXED_INCOME_COLOR,
+          );
         }
       });
-      setStep('summary');
-    } catch { Alert.alert('資料尚未儲存成功', '請確認裝置儲存空間後再試一次。'); }
-    finally { setSaving(false); }
+      setStep("summary");
+    } catch {
+      Alert.alert("資料尚未儲存成功", "請確認裝置儲存空間後再試一次。");
+    } finally {
+      setSaving(false);
+    }
   };
   const finish = async (): Promise<void> => {
     setSaving(true);
-    try { const db = await database(); await db.runAsync('UPDATE profile SET onboarding_complete = 1 WHERE id = 1'); await loadDreamDashboard(db); setComplete(true); }
-    catch { Alert.alert('設定尚未完成', '請再試一次。'); }
-    finally { setSaving(false); }
+    try {
+      const db = await database();
+      await db.runAsync(
+        "UPDATE profile SET onboarding_complete = 1 WHERE id = 1",
+      );
+      await loadDreamDashboard(db);
+      setComplete(true);
+    } catch {
+      Alert.alert("設定尚未完成", "請再試一次。");
+    } finally {
+      setSaving(false);
+    }
   };
   const deleteLocalData = async (): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
       await db.withTransactionAsync(async (): Promise<void> => {
-        await db.runAsync('DELETE FROM financial_entries');
-        await db.runAsync('DELETE FROM financial_items');
-        await db.runAsync('DELETE FROM calendar_transactions');
-        await db.runAsync('DELETE FROM transaction_categories');
-        await db.runAsync('DELETE FROM dreams');
-        await db.runAsync('DELETE FROM app_settings');
-        await db.runAsync('DELETE FROM reminders');
-        await db.runAsync('DELETE FROM profile WHERE id = 1');
+        await db.runAsync("DELETE FROM financial_entries");
+        await db.runAsync("DELETE FROM financial_items");
+        await db.runAsync("DELETE FROM calendar_transactions");
+        await db.runAsync("DELETE FROM transaction_categories");
+        await db.runAsync("DELETE FROM dreams");
+        await db.runAsync("DELETE FROM app_settings");
+        await db.runAsync("DELETE FROM reminders");
+        await db.runAsync("DELETE FROM profile WHERE id = 1");
       });
       await Notifications.cancelAllScheduledNotificationsAsync();
-      setAssets(initialAssets); setLiabilities(initialLiabilities); setIncome(initialIncome); setExpenses(initialExpenses);
-      setMonthlyIncome(0); setMonthlyExpenses(0); setDreams([]); setFinancialEntries([]); setTransactionCategories([]); setCalendarTransactions([]); setReminders([]);
-      setDisplayName('使用者'); setAvatarUri(null); setCloudInvoiceBarcode(''); setStep('welcome'); setComplete(false);
+      setAssets(initialAssets);
+      setLiabilities(initialLiabilities);
+      setIncome(initialIncome);
+      setExpenses(initialExpenses);
+      setMonthlyIncome(0);
+      setMonthlyExpenses(0);
+      setDreams([]);
+      setFinancialEntries([]);
+      setTransactionCategories([]);
+      setCalendarTransactions([]);
+      setReminders([]);
+      setDisplayName("使用者");
+      setAvatarUri(null);
+      setCloudInvoiceBarcode("");
+      applyLanguagePreference("system");
+      setLanguagePreference("system");
+      setStep("welcome");
+      setComplete(false);
       return true;
     } catch {
-      Alert.alert('刪除失敗', '請稍後再試一次。');
+      Alert.alert("刪除失敗", "請稍後再試一次。");
       return false;
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
   const closeDreamForm = (): void => {
-    setDreamTitle('');
-    setDreamTarget('');
-    setDreamAllocation('');
+    setDreamTitle("");
+    setDreamTarget("");
+    setDreamAllocation("");
     setDreamImageUri(null);
-    setDreamTargetDate('');
+    setDreamTargetDate("");
     setIsDreamFormOpen(false);
   };
   const pickDreamImage = async (): Promise<void> => {
@@ -396,45 +806,60 @@ export default function App() {
         allowsEditing: true,
         aspect: [4, 3],
         base64: true,
-        mediaTypes: ['images'],
+        mediaTypes: ["images"],
         quality: 0.6,
       });
       if (!result.canceled) {
         const pickedImage = result.assets[0];
-        setDreamImageUri(pickedImage.base64 ? `data:${pickedImage.mimeType ?? 'image/jpeg'};base64,${pickedImage.base64}` : pickedImage.uri);
+        setDreamImageUri(
+          pickedImage.base64
+            ? `data:${pickedImage.mimeType ?? "image/jpeg"};base64,${pickedImage.base64}`
+            : pickedImage.uri,
+        );
       }
     } catch {
-      Alert.alert('目前無法選擇圖片', '請確認相簿權限後再試一次。');
+      Alert.alert("目前無法選擇圖片", "請確認相簿權限後再試一次。");
     }
   };
   const createDream = async (): Promise<void> => {
     const targetAmount = amount(dreamTarget);
     const allocationAmount = amount(dreamAllocation);
-    const alreadyAllocated = dreams.reduce((sum, dream) => sum + dream.monthly_allocation, 0);
+    const alreadyAllocated = dreams.reduce(
+      (sum, dream) => sum + dream.monthly_allocation,
+      0,
+    );
     const monthlyAvailable = Math.max(0, monthlyIncome - monthlyExpenses);
-    if (dreamTitle.trim() === '' || targetAmount === null || targetAmount === 0 || allocationAmount === null) {
-      Alert.alert('請完成夢想資料', '請填寫夢想名稱、目標金額與每月分配金額。');
+    if (
+      dreamTitle.trim() === "" ||
+      targetAmount === null ||
+      targetAmount === 0 ||
+      allocationAmount === null
+    ) {
+      Alert.alert("請完成夢想資料", "請填寫夢想名稱、目標金額與每月分配金額。");
       return;
     }
     if (allocationAmount + alreadyAllocated > monthlyAvailable) {
-      Alert.alert('超過本月可投入金額', `目前尚可分配 ${money(Math.max(0, monthlyAvailable - alreadyAllocated))}。`);
+      Alert.alert(
+        "超過本月可投入金額",
+        `目前尚可分配 ${money(Math.max(0, monthlyAvailable - alreadyAllocated))}。`,
+      );
       return;
     }
     setSaving(true);
     try {
       const db = await database();
       await db.runAsync(
-        'INSERT INTO dreams (title, target_amount, monthly_allocation, image_uri, target_date) VALUES (?, ?, ?, ?, ?)',
+        "INSERT INTO dreams (title, target_amount, monthly_allocation, image_uri, target_date) VALUES (?, ?, ?, ?, ?)",
         dreamTitle.trim(),
         targetAmount,
         allocationAmount,
         dreamImageUri,
-        dreamTargetDate === '' ? null : dreamTargetDate,
+        dreamTargetDate === "" ? null : dreamTargetDate,
       );
       await loadDreamDashboard(db);
       closeDreamForm();
     } catch {
-      Alert.alert('夢想尚未建立', '請稍後再試一次。');
+      Alert.alert("夢想尚未建立", "請稍後再試一次。");
     } finally {
       setSaving(false);
     }
@@ -443,48 +868,89 @@ export default function App() {
     setSaving(true);
     try {
       const db = await database();
-      const dream = await db.getFirstAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE id = ?', id);
+      const dream = await db.getFirstAsync<Dream>(
+        "SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE id = ?",
+        id,
+      );
       if (!dream || dream.completed_at !== null) return false;
       const executedAt = new Date().toISOString();
       await db.withTransactionAsync(async (): Promise<void> => {
-        await adjustPaymentAccount(db, 'cash', dream.target_amount);
-        await db.runAsync('INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', 'expense', '夢想提撥', dream.target_amount, dream.title, executedAt, 'cash', 1, dream.id);
-        await db.runAsync('UPDATE dreams SET completed_at = ?, finance_adjusted = 1, calendar_entry_deleted = 0 WHERE id = ?', executedAt, id);
+        await adjustPaymentAccount(db, "cash", dream.target_amount);
+        await db.runAsync(
+          "INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "expense",
+          "夢想提撥",
+          dream.target_amount,
+          dream.title,
+          executedAt,
+          "cash",
+          1,
+          dream.id,
+        );
+        await db.runAsync(
+          "UPDATE dreams SET completed_at = ?, finance_adjusted = 1, calendar_entry_deleted = 0 WHERE id = ?",
+          executedAt,
+          id,
+        );
       });
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('夢想尚未執行', '請稍後再試一次。');
+      Alert.alert("夢想尚未執行", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
     }
   };
-  const createFinancialEntry = async (kind: 'asset' | 'liability', category: string, entryAmount: number): Promise<boolean> => {
+  const createFinancialEntry = async (
+    kind: "asset" | "liability",
+    category: string,
+    entryAmount: number,
+  ): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      await db.runAsync('INSERT INTO financial_entries (kind, category, amount) VALUES (?, ?, ?)', kind, category.trim(), entryAmount);
+      await db.runAsync(
+        "INSERT INTO financial_entries (kind, category, amount) VALUES (?, ?, ?)",
+        kind,
+        category.trim(),
+        entryAmount,
+      );
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('項目尚未新增', '請稍後再試一次。');
+      Alert.alert("項目尚未新增", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
     }
   };
-  const updateFinancialEntry = async (id: number, kind: 'asset' | 'liability', category: string, entryAmount: number): Promise<boolean> => {
+  const updateFinancialEntry = async (
+    id: number,
+    kind: "asset" | "liability",
+    category: string,
+    entryAmount: number,
+  ): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      const existing = await db.getFirstAsync<FinancialEntry>('SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries WHERE id = ?', id);
-      const protectedEntry = existing !== null && isSystemFinancialEntry(existing);
-      await db.runAsync('UPDATE financial_entries SET kind = ?, category = ?, amount = ? WHERE id = ?', protectedEntry ? existing.kind : kind, protectedEntry ? existing.category : category.trim(), entryAmount, id);
+      const existing = await db.getFirstAsync<FinancialEntry>(
+        "SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries WHERE id = ?",
+        id,
+      );
+      const protectedEntry =
+        existing !== null && isSystemFinancialEntry(existing);
+      await db.runAsync(
+        "UPDATE financial_entries SET kind = ?, category = ?, amount = ? WHERE id = ?",
+        protectedEntry ? existing.kind : kind,
+        protectedEntry ? existing.category : category.trim(),
+        entryAmount,
+        id,
+      );
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('項目尚未更新', '請稍後再試一次。');
+      Alert.alert("項目尚未更新", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
@@ -494,68 +960,157 @@ export default function App() {
     setSaving(true);
     try {
       const db = await database();
-      const entry = await db.getFirstAsync<FinancialEntry>('SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries WHERE id = ?', id);
+      const entry = await db.getFirstAsync<FinancialEntry>(
+        "SELECT id, kind, category, amount, day_of_month, note, color FROM financial_entries WHERE id = ?",
+        id,
+      );
       if (!entry || isSystemFinancialEntry(entry)) return false;
-      await db.runAsync("DELETE FROM financial_entries WHERE id = ? AND kind IN ('asset','liability')", id);
-      await loadDreamDashboard(db);
-      return true;
-    } catch { Alert.alert('項目尚未刪除', '請稍後再試一次。'); return false; }
-    finally { setSaving(false); }
-  };
-  const deleteDream = async (id: number): Promise<boolean> => {
-    setSaving(true);
-    try {
-      const db = await database();
-      const dream = await db.getFirstAsync<Dream>('SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE id = ?', id);
-      if (!dream) return false;
-      await db.withTransactionAsync(async (): Promise<void> => {
-        const linkedTransactions = await db.getAllAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE dream_id = ?', id);
-        for (const transaction of linkedTransactions) {
-          if (transaction.finance_adjusted === 1) await applyCalendarFinancialImpact(db, transaction.kind, transaction.category, transaction.amount, transaction.payment_method, -1);
-        }
-        if (linkedTransactions.length === 0 && dream.finance_adjusted === 1) await adjustPaymentAccount(db, 'cash', -dream.target_amount);
-        await db.runAsync('DELETE FROM calendar_transactions WHERE dream_id = ?', id);
-        await db.runAsync('DELETE FROM dreams WHERE id = ?', id);
-      });
-      await loadDreamDashboard(db);
-      return true;
-    } catch { Alert.alert('夢想尚未刪除', '請稍後再試一次。'); return false; }
-    finally { setSaving(false); }
-  };
-  const createCalendarTransaction = async (kind: TransactionKind, category: string, transactionAmount: number, note: string, occurredAt: string, paymentMethod: PaymentMethod | null): Promise<boolean> => {
-    setSaving(true);
-    try {
-      const db = await database();
-      await db.withTransactionAsync(async (): Promise<void> => {
-        const effectivePaymentMethod = kind === 'expense' && isCreditCardRepayment(category) ? 'cash' : paymentMethod;
-        await applyCalendarFinancialImpact(db, kind, category, transactionAmount, effectivePaymentMethod, 1);
-        await db.runAsync('INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted) VALUES (?, ?, ?, ?, ?, ?, ?)', kind, category, transactionAmount, note.trim(), occurredAt, kind === 'expense' ? effectivePaymentMethod : null, 1);
-      });
+      await db.runAsync(
+        "DELETE FROM financial_entries WHERE id = ? AND kind IN ('asset','liability')",
+        id,
+      );
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('紀錄尚未新增', '請稍後再試一次。');
+      Alert.alert("項目尚未刪除", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
     }
   };
-  const updateCalendarTransaction = async (input: CalendarTransactionUpdate): Promise<boolean> => {
+  const deleteDream = async (id: number): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      const existing = await db.getFirstAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE id = ?', input.id);
-      if (!existing) return false;
+      const dream = await db.getFirstAsync<Dream>(
+        "SELECT id, title, target_amount, saved_amount, monthly_allocation, image_uri, target_date, completed_at, finance_adjusted, calendar_entry_deleted FROM dreams WHERE id = ?",
+        id,
+      );
+      if (!dream) return false;
       await db.withTransactionAsync(async (): Promise<void> => {
-        if (existing.finance_adjusted === 1) await applyCalendarFinancialImpact(db, existing.kind, existing.category, existing.amount, existing.payment_method, -1);
-        const effectivePaymentMethod = existing.kind === 'expense' && isCreditCardRepayment(input.category) ? 'cash' : input.paymentMethod;
-        await applyCalendarFinancialImpact(db, existing.kind, input.category, input.amount, effectivePaymentMethod, 1);
-        await db.runAsync('UPDATE calendar_transactions SET category = ?, amount = ?, note = ?, occurred_at = ?, payment_method = ?, finance_adjusted = 1 WHERE id = ?', input.category, input.amount, input.note.trim(), input.occurredAt, existing.kind === 'expense' ? effectivePaymentMethod : null, input.id);
+        const linkedTransactions = await db.getAllAsync<CalendarTransaction>(
+          "SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE dream_id = ?",
+          id,
+        );
+        for (const transaction of linkedTransactions) {
+          if (transaction.finance_adjusted === 1)
+            await applyCalendarFinancialImpact(
+              db,
+              transaction.kind,
+              transaction.category,
+              transaction.amount,
+              transaction.payment_method,
+              -1,
+            );
+        }
+        if (linkedTransactions.length === 0 && dream.finance_adjusted === 1)
+          await adjustPaymentAccount(db, "cash", -dream.target_amount);
+        await db.runAsync(
+          "DELETE FROM calendar_transactions WHERE dream_id = ?",
+          id,
+        );
+        await db.runAsync("DELETE FROM dreams WHERE id = ?", id);
       });
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('支出內容尚未更新', '請稍後再試一次。');
+      Alert.alert("夢想尚未刪除", "請稍後再試一次。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const createCalendarTransaction = async (
+    kind: TransactionKind,
+    category: string,
+    transactionAmount: number,
+    note: string,
+    occurredAt: string,
+    paymentMethod: PaymentMethod | null,
+  ): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      await db.withTransactionAsync(async (): Promise<void> => {
+        const effectivePaymentMethod =
+          kind === "expense" && isCreditCardRepayment(category)
+            ? "cash"
+            : paymentMethod;
+        await applyCalendarFinancialImpact(
+          db,
+          kind,
+          category,
+          transactionAmount,
+          effectivePaymentMethod,
+          1,
+        );
+        await db.runAsync(
+          "INSERT INTO calendar_transactions (kind, category, amount, note, occurred_at, payment_method, finance_adjusted) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          kind,
+          category,
+          transactionAmount,
+          note.trim(),
+          occurredAt,
+          kind === "expense" ? effectivePaymentMethod : null,
+          1,
+        );
+      });
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert("紀錄尚未新增", "請稍後再試一次。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const updateCalendarTransaction = async (
+    input: CalendarTransactionUpdate,
+  ): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      const existing = await db.getFirstAsync<CalendarTransaction>(
+        "SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE id = ?",
+        input.id,
+      );
+      if (!existing) return false;
+      await db.withTransactionAsync(async (): Promise<void> => {
+        if (existing.finance_adjusted === 1)
+          await applyCalendarFinancialImpact(
+            db,
+            existing.kind,
+            existing.category,
+            existing.amount,
+            existing.payment_method,
+            -1,
+          );
+        const effectivePaymentMethod =
+          existing.kind === "expense" && isCreditCardRepayment(input.category)
+            ? "cash"
+            : input.paymentMethod;
+        await applyCalendarFinancialImpact(
+          db,
+          existing.kind,
+          input.category,
+          input.amount,
+          effectivePaymentMethod,
+          1,
+        );
+        await db.runAsync(
+          "UPDATE calendar_transactions SET category = ?, amount = ?, note = ?, occurred_at = ?, payment_method = ?, finance_adjusted = 1 WHERE id = ?",
+          input.category,
+          input.amount,
+          input.note.trim(),
+          input.occurredAt,
+          existing.kind === "expense" ? effectivePaymentMethod : null,
+          input.id,
+        );
+      });
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert("支出內容尚未更新", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
@@ -565,111 +1120,293 @@ export default function App() {
     setSaving(true);
     try {
       const db = await database();
-      const existing = await db.getFirstAsync<CalendarTransaction>('SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE id = ?', id);
+      const existing = await db.getFirstAsync<CalendarTransaction>(
+        "SELECT id, kind, category, amount, note, occurred_at, payment_method, finance_adjusted, dream_id FROM calendar_transactions WHERE id = ?",
+        id,
+      );
       if (!existing) return false;
       await db.withTransactionAsync(async (): Promise<void> => {
-        if (existing.finance_adjusted === 1) await applyCalendarFinancialImpact(db, existing.kind, existing.category, existing.amount, existing.payment_method, -1);
-        await db.runAsync('DELETE FROM calendar_transactions WHERE id = ?', id);
-        if (existing.dream_id !== null) await db.runAsync('UPDATE dreams SET finance_adjusted = 0, calendar_entry_deleted = 1 WHERE id = ?', existing.dream_id);
+        if (existing.finance_adjusted === 1)
+          await applyCalendarFinancialImpact(
+            db,
+            existing.kind,
+            existing.category,
+            existing.amount,
+            existing.payment_method,
+            -1,
+          );
+        await db.runAsync("DELETE FROM calendar_transactions WHERE id = ?", id);
+        if (existing.dream_id !== null)
+          await db.runAsync(
+            "UPDATE dreams SET finance_adjusted = 0, calendar_entry_deleted = 1 WHERE id = ?",
+            existing.dream_id,
+          );
       });
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('記錄尚未刪除', '請稍後再試一次。');
+      Alert.alert("記錄尚未刪除", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
     }
   };
-  const updateFixedFinanceColor = async (kind: TransactionKind, color: string): Promise<boolean> => {
+  const updateFixedFinanceColor = async (
+    kind: TransactionKind,
+    color: string,
+  ): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      const key = kind === 'income' ? 'fixed_income_color' : 'fixed_expense_color';
+      const key =
+        kind === "income" ? "fixed_income_color" : "fixed_expense_color";
       await db.withTransactionAsync(async (): Promise<void> => {
-        await db.runAsync('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', key, color);
-        await db.runAsync('UPDATE financial_entries SET color = ? WHERE kind = ?', color, kind);
+        await db.runAsync(
+          "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          key,
+          color,
+        );
+        await db.runAsync(
+          "UPDATE financial_entries SET color = ? WHERE kind = ?",
+          color,
+          kind,
+        );
       });
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('顏色尚未更新', '請稍後再試一次。');
+      Alert.alert("顏色尚未更新", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
     }
   };
-  const createTransactionCategory = async (kind: TransactionKind, name: string): Promise<boolean> => {
+  const updateLanguagePreference = async (preference: LanguagePreference): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      await db.runAsync('INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES (?, ?)', kind, name.trim());
-      await loadDreamDashboard(db);
+      await db.runAsync(
+        "INSERT INTO app_settings (key, value) VALUES ('language_preference', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        preference,
+      );
+      applyLanguagePreference(preference);
+      setLanguagePreference(preference);
       return true;
     } catch {
-      Alert.alert('類別尚未新增', '請稍後再試一次。');
+      Alert.alert("語言設定尚未更新", "請稍後再試一次。");
       return false;
     } finally {
       setSaving(false);
     }
   };
-  const updateProfile = async (name: string, nextAvatarUri: string | null, nextCloudInvoiceBarcode: string): Promise<boolean> => {
-    if (name.trim() === '') { Alert.alert('請輸入使用者名稱'); return false; }
+  const createTransactionCategory = async (
+    kind: TransactionKind,
+    name: string,
+  ): Promise<boolean> => {
+    setSaving(true);
+    try {
+      const db = await database();
+      await db.runAsync(
+        "INSERT OR IGNORE INTO transaction_categories (kind, name) VALUES (?, ?)",
+        kind,
+        name.trim(),
+      );
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert("類別尚未新增", "請稍後再試一次。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+  const updateProfile = async (
+    name: string,
+    nextAvatarUri: string | null,
+    nextCloudInvoiceBarcode: string,
+  ): Promise<boolean> => {
+    if (name.trim() === "") {
+      Alert.alert("請輸入使用者名稱");
+      return false;
+    }
     const normalizedBarcode = nextCloudInvoiceBarcode.trim().toUpperCase();
-    if (normalizedBarcode !== '' && !CLOUD_INVOICE_BARCODE_PATTERN.test(normalizedBarcode)) { Alert.alert('請確認雲端發票代碼', '手機條碼必須以 / 開頭，並接著 7 個英文、數字或 . + - 符號。'); return false; }
+    if (
+      normalizedBarcode !== "" &&
+      !CLOUD_INVOICE_BARCODE_PATTERN.test(normalizedBarcode)
+    ) {
+      Alert.alert(
+        "請確認雲端發票代碼",
+        "手機條碼必須以 / 開頭，並接著 7 個英文、數字或 . + - 符號。",
+      );
+      return false;
+    }
     setSaving(true);
     try {
       const db = await database();
       await db.withTransactionAsync(async (): Promise<void> => {
-        await db.runAsync('UPDATE profile SET display_name = ?, avatar_uri = ? WHERE id = 1', name.trim(), nextAvatarUri);
-        await db.runAsync('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'cloud_invoice_barcode', normalizedBarcode);
+        await db.runAsync(
+          "UPDATE profile SET display_name = ?, avatar_uri = ? WHERE id = 1",
+          name.trim(),
+          nextAvatarUri,
+        );
+        await db.runAsync(
+          "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+          "cloud_invoice_barcode",
+          normalizedBarcode,
+        );
       });
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('個人資料尚未更新', '請稍後再試一次。');
+      Alert.alert("個人資料尚未更新", "請稍後再試一次。");
       return false;
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
-  const saveFixedEntry = async (entry: { id?: number; kind: TransactionKind; category: string; amount: number; dayOfMonth: number; note: string; color: string }): Promise<boolean> => {
+  const saveFixedEntry = async (entry: {
+    id?: number;
+    kind: TransactionKind;
+    category: string;
+    amount: number;
+    dayOfMonth: number;
+    note: string;
+    color: string;
+  }): Promise<boolean> => {
     setSaving(true);
     try {
       const db = await database();
-      if (entry.id === undefined) await db.runAsync('INSERT INTO financial_entries (kind, category, amount, day_of_month, note, color) VALUES (?, ?, ?, ?, ?, ?)', entry.kind, entry.category, entry.amount, entry.dayOfMonth, entry.note.trim(), entry.color);
-      else await db.runAsync('UPDATE financial_entries SET category = ?, amount = ?, day_of_month = ?, note = ?, color = ? WHERE id = ? AND kind = ?', entry.category, entry.amount, entry.dayOfMonth, entry.note.trim(), entry.color, entry.id, entry.kind);
+      if (entry.id === undefined)
+        await db.runAsync(
+          "INSERT INTO financial_entries (kind, category, amount, day_of_month, note, color) VALUES (?, ?, ?, ?, ?, ?)",
+          entry.kind,
+          entry.category,
+          entry.amount,
+          entry.dayOfMonth,
+          entry.note.trim(),
+          entry.color,
+        );
+      else
+        await db.runAsync(
+          "UPDATE financial_entries SET category = ?, amount = ?, day_of_month = ?, note = ?, color = ? WHERE id = ? AND kind = ?",
+          entry.category,
+          entry.amount,
+          entry.dayOfMonth,
+          entry.note.trim(),
+          entry.color,
+          entry.id,
+          entry.kind,
+        );
       await loadDreamDashboard(db);
       return true;
     } catch {
-      Alert.alert('固定財務項目尚未儲存', '請稍後再試一次。');
+      Alert.alert("固定財務項目尚未儲存", "請稍後再試一次。");
       return false;
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
   const deleteFixedEntry = async (id: number): Promise<boolean> => {
     setSaving(true);
-    try { const db = await database(); await db.runAsync("DELETE FROM financial_entries WHERE id = ? AND kind IN ('income','expense')", id); await loadDreamDashboard(db); return true; }
-    catch { Alert.alert('項目尚未刪除', '請稍後再試一次。'); return false; }
-    finally { setSaving(false); }
+    try {
+      const db = await database();
+      await db.runAsync(
+        "DELETE FROM financial_entries WHERE id = ? AND kind IN ('income','expense')",
+        id,
+      );
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert("項目尚未刪除", "請稍後再試一次。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
-  const updateTransactionCategory = async (id: number, name: string): Promise<boolean> => {
+  const updateTransactionCategory = async (
+    id: number,
+    name: string,
+  ): Promise<boolean> => {
     setSaving(true);
-    try { const db = await database(); const existing = await db.getFirstAsync<TransactionCategory>('SELECT id, kind, name FROM transaction_categories WHERE id = ?', id); if (existing?.kind === 'expense' && existing.name === SYSTEM_EXPENSE_CATEGORY) return false; await db.runAsync('UPDATE transaction_categories SET name = ? WHERE id = ?', name.trim(), id); await loadDreamDashboard(db); return true; }
-    catch { Alert.alert('類別尚未更新', '名稱可能已經存在。'); return false; }
-    finally { setSaving(false); }
+    try {
+      const db = await database();
+      const existing = await db.getFirstAsync<TransactionCategory>(
+        "SELECT id, kind, name FROM transaction_categories WHERE id = ?",
+        id,
+      );
+      if (
+        existing?.kind === "expense" &&
+        existing.name === SYSTEM_EXPENSE_CATEGORY
+      )
+        return false;
+      await db.runAsync(
+        "UPDATE transaction_categories SET name = ? WHERE id = ?",
+        name.trim(),
+        id,
+      );
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert("類別尚未更新", "名稱可能已經存在。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
   const deleteTransactionCategory = async (id: number): Promise<boolean> => {
     setSaving(true);
-    try { const db = await database(); const existing = await db.getFirstAsync<TransactionCategory>('SELECT id, kind, name FROM transaction_categories WHERE id = ?', id); if (existing?.kind === 'expense' && existing.name === SYSTEM_EXPENSE_CATEGORY) return false; await db.runAsync('DELETE FROM transaction_categories WHERE id = ?', id); await loadDreamDashboard(db); return true; }
-    catch { Alert.alert('類別尚未刪除', '請稍後再試一次。'); return false; }
-    finally { setSaving(false); }
+    try {
+      const db = await database();
+      const existing = await db.getFirstAsync<TransactionCategory>(
+        "SELECT id, kind, name FROM transaction_categories WHERE id = ?",
+        id,
+      );
+      if (
+        existing?.kind === "expense" &&
+        existing.name === SYSTEM_EXPENSE_CATEGORY
+      )
+        return false;
+      await db.runAsync("DELETE FROM transaction_categories WHERE id = ?", id);
+      await loadDreamDashboard(db);
+      return true;
+    } catch {
+      Alert.alert("類別尚未刪除", "請稍後再試一次。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
-  const scheduleMonthlyReminder = async (input: ReminderInput): Promise<string | null> => {
-    if (Platform.OS === 'android') await Notifications.setNotificationChannelAsync('monthly-reminders', { name: '每月提醒', importance: Notifications.AndroidImportance.HIGH });
+  const scheduleMonthlyReminder = async (
+    input: ReminderInput,
+  ): Promise<string | null> => {
+    if (Platform.OS === "android")
+      await Notifications.setNotificationChannelAsync("monthly-reminders", {
+        name: t("每月提醒"),
+        importance: Notifications.AndroidImportance.HIGH,
+      });
     const currentPermission = await Notifications.getPermissionsAsync();
-    const permission = currentPermission.status === 'granted' ? currentPermission : await Notifications.requestPermissionsAsync();
-    if (permission.status !== 'granted') { Alert.alert('尚未允許通知', '請到手機系統設定中允許通知後再試一次。'); return null; }
+    const permission =
+      currentPermission.status === "granted"
+        ? currentPermission
+        : await Notifications.requestPermissionsAsync();
+    if (permission.status !== "granted") {
+      Alert.alert("尚未允許通知", "請到手機系統設定中允許通知後再試一次。");
+      return null;
+    }
     return Notifications.scheduleNotificationAsync({
-      content: { title: input.title.trim(), body: input.body.trim(), data: { reminderItem: input.item }, sound: 'default' },
-      trigger: { channelId: Platform.OS === 'android' ? 'monthly-reminders' : undefined, day: input.dayOfMonth, hour: input.hour, minute: input.minute, type: Notifications.SchedulableTriggerInputTypes.MONTHLY },
+      content: {
+        title: t(input.title.trim()),
+        body: t(input.body.trim()),
+        data: { reminderItem: t(input.item) },
+        sound: "default",
+      },
+      trigger: {
+        channelId: Platform.OS === "android" ? "monthly-reminders" : undefined,
+        day: input.dayOfMonth,
+        hour: input.hour,
+        minute: input.minute,
+        type: Notifications.SchedulableTriggerInputTypes.MONTHLY,
+      },
     });
   };
   const saveReminder = async (input: ReminderInput): Promise<boolean> => {
@@ -680,101 +1417,726 @@ export default function App() {
       if (newIdentifier === null) return false;
       const db = await database();
       if (input.id === undefined) {
-        await db.runAsync('INSERT INTO reminders (item, title, body, day_of_month, hour, minute, notification_identifier) VALUES (?, ?, ?, ?, ?, ?, ?)', input.item, input.title.trim(), input.body.trim(), input.dayOfMonth, input.hour, input.minute, newIdentifier);
+        await db.runAsync(
+          "INSERT INTO reminders (item, title, body, day_of_month, hour, minute, notification_identifier) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          input.item,
+          input.title.trim(),
+          input.body.trim(),
+          input.dayOfMonth,
+          input.hour,
+          input.minute,
+          newIdentifier,
+        );
       } else {
         const previous = reminders.find((reminder) => reminder.id === input.id);
-        await db.runAsync('UPDATE reminders SET item = ?, title = ?, body = ?, day_of_month = ?, hour = ?, minute = ?, notification_identifier = ? WHERE id = ?', input.item, input.title.trim(), input.body.trim(), input.dayOfMonth, input.hour, input.minute, newIdentifier, input.id);
-        if (previous) await Notifications.cancelScheduledNotificationAsync(previous.notification_identifier);
+        await db.runAsync(
+          "UPDATE reminders SET item = ?, title = ?, body = ?, day_of_month = ?, hour = ?, minute = ?, notification_identifier = ? WHERE id = ?",
+          input.item,
+          input.title.trim(),
+          input.body.trim(),
+          input.dayOfMonth,
+          input.hour,
+          input.minute,
+          newIdentifier,
+          input.id,
+        );
+        if (previous)
+          await Notifications.cancelScheduledNotificationAsync(
+            previous.notification_identifier,
+          );
       }
       await loadDreamDashboard(db);
       return true;
     } catch {
-      if (newIdentifier) await Notifications.cancelScheduledNotificationAsync(newIdentifier).catch(() => undefined);
-      Alert.alert('提醒尚未儲存', '請確認通知權限後再試一次。');
+      if (newIdentifier)
+        await Notifications.cancelScheduledNotificationAsync(
+          newIdentifier,
+        ).catch(() => undefined);
+      Alert.alert("提醒尚未儲存", "請確認通知權限後再試一次。");
       return false;
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
   const deleteReminder = async (id: number): Promise<boolean> => {
     setSaving(true);
     try {
       const reminder = reminders.find((item) => item.id === id);
-      if (reminder) await Notifications.cancelScheduledNotificationAsync(reminder.notification_identifier);
+      if (reminder)
+        await Notifications.cancelScheduledNotificationAsync(
+          reminder.notification_identifier,
+        );
       const db = await database();
-      await db.runAsync('DELETE FROM reminders WHERE id = ?', id);
+      await db.runAsync("DELETE FROM reminders WHERE id = ?", id);
       await loadDreamDashboard(db);
       return true;
-    } catch { Alert.alert('提醒尚未刪除', '請稍後再試一次。'); return false; }
-    finally { setSaving(false); }
+    } catch {
+      Alert.alert("提醒尚未刪除", "請稍後再試一次。");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (loading) return <View style={styles.center}><ActivityIndicator color="#087A50" size="large" /></View>;
-  if (!complete) return <Onboarding step={step} assets={assets} liabilities={liabilities} income={income} expenses={expenses} saving={saving} onUpdate={update} onAdd={add} onNext={next} onSave={save} onFinish={finish} />;
-  if (activeTab === 'dreams') return <DreamsHome dreams={dreams} isFormOpen={isDreamFormOpen} isSaving={saving} resourceTotal={financialEntries.filter((entry) => entry.kind === 'asset').reduce((sum, entry) => sum + entry.amount, 0)} onCloseForm={closeDreamForm} onCreateDream={() => { setDreamTitle(''); setDreamTarget(''); setDreamAllocation(''); setDreamImageUri(null); setDreamTargetDate(''); setIsDreamFormOpen(true); }} onDeleteDream={deleteDream} onExecuteDream={executeDream} onPickImage={() => { void pickDreamImage(); }} onSaveDream={createDream} onSetAllocation={(value) => setDreamAllocation(formatAmountInput(value))} onSetTarget={(value) => setDreamTarget(formatAmountInput(value))} onSetTargetDate={setDreamTargetDate} onSetTitle={setDreamTitle} setActiveTab={setActiveTab} dreamAllocation={dreamAllocation} dreamImageUri={dreamImageUri} dreamTarget={dreamTarget} dreamTargetDate={dreamTargetDate} dreamTitle={dreamTitle} />;
-  if (activeTab === 'finance') return <FinanceHome entries={financialEntries} isSaving={saving} onAddEntry={createFinancialEntry} onDeleteEntry={deleteFinancialEntry} onUpdateEntry={updateFinancialEntry} setActiveTab={setActiveTab} />;
-  if (activeTab === 'calendar') return <CalendarHome categories={transactionCategories} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} isSaving={saving} monthlyExpenses={monthlyExpenses} monthlyIncome={monthlyIncome} onAddTransaction={createCalendarTransaction} onDeleteTransaction={deleteCalendarTransaction} onUpdateTransaction={updateCalendarTransaction} setActiveTab={setActiveTab} transactions={calendarTransactions} />;
-  return <ProfileHome avatarUri={avatarUri} categories={transactionCategories} cloudInvoiceBarcode={cloudInvoiceBarcode} displayName={displayName} dreams={dreams} fixedEntries={financialEntries.filter((entry) => entry.kind === 'income' || entry.kind === 'expense')} fixedExpenseColor={fixedExpenseColor} fixedIncomeColor={fixedIncomeColor} monthlyIncome={monthlyIncome} monthlyExpenses={monthlyExpenses} reminders={reminders} saving={saving} onAddCategory={createTransactionCategory} onDeleteCategory={deleteTransactionCategory} onDeleteFixedEntry={deleteFixedEntry} onDeleteLocalData={deleteLocalData} onDeleteReminder={deleteReminder} onSaveFixedEntry={saveFixedEntry} onSaveReminder={saveReminder} onUpdateCategory={updateTransactionCategory} onUpdateFixedColor={updateFixedFinanceColor} onUpdateProfile={updateProfile} setActiveTab={setActiveTab} />;
+  if (loading)
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator color="#087A50" size="large" />
+      </View>
+    );
+  if (!complete)
+    return (
+      <Onboarding
+        step={step}
+        assets={assets}
+        liabilities={liabilities}
+        income={income}
+        expenses={expenses}
+        saving={saving}
+        onUpdate={update}
+        onAdd={add}
+        onNext={next}
+        onSave={save}
+        onFinish={finish}
+      />
+    );
+  if (activeTab === "dreams")
+    return (
+      <DreamsHome
+        dreams={dreams}
+        isFormOpen={isDreamFormOpen}
+        isSaving={saving}
+        resourceTotal={financialEntries
+          .filter((entry) => entry.kind === "asset")
+          .reduce((sum, entry) => sum + entry.amount, 0)}
+        onCloseForm={closeDreamForm}
+        onCreateDream={() => {
+          setDreamTitle("");
+          setDreamTarget("");
+          setDreamAllocation("");
+          setDreamImageUri(null);
+          setDreamTargetDate("");
+          setIsDreamFormOpen(true);
+        }}
+        onDeleteDream={deleteDream}
+        onExecuteDream={executeDream}
+        onPickImage={() => {
+          void pickDreamImage();
+        }}
+        onSaveDream={createDream}
+        onSetAllocation={(value) =>
+          setDreamAllocation(formatAmountInput(value))
+        }
+        onSetTarget={(value) => setDreamTarget(formatAmountInput(value))}
+        onSetTargetDate={setDreamTargetDate}
+        onSetTitle={setDreamTitle}
+        setActiveTab={setActiveTab}
+        dreamAllocation={dreamAllocation}
+        dreamImageUri={dreamImageUri}
+        dreamTarget={dreamTarget}
+        dreamTargetDate={dreamTargetDate}
+        dreamTitle={dreamTitle}
+      />
+    );
+  if (activeTab === "finance")
+    return (
+      <FinanceHome
+        entries={financialEntries}
+        isSaving={saving}
+        onAddEntry={createFinancialEntry}
+        onDeleteEntry={deleteFinancialEntry}
+        onUpdateEntry={updateFinancialEntry}
+        setActiveTab={setActiveTab}
+      />
+    );
+  if (activeTab === "calendar")
+    return (
+      <CalendarHome
+        categories={transactionCategories}
+        fixedEntries={financialEntries.filter(
+          (entry) => entry.kind === "income" || entry.kind === "expense",
+        )}
+        fixedExpenseColor={fixedExpenseColor}
+        fixedIncomeColor={fixedIncomeColor}
+        isSaving={saving}
+        monthlyExpenses={monthlyExpenses}
+        monthlyIncome={monthlyIncome}
+        onAddTransaction={createCalendarTransaction}
+        onDeleteTransaction={deleteCalendarTransaction}
+        onUpdateTransaction={updateCalendarTransaction}
+        setActiveTab={setActiveTab}
+        transactions={calendarTransactions}
+      />
+    );
+  return (
+    <ProfileHome
+      avatarUri={avatarUri}
+      categories={transactionCategories}
+      cloudInvoiceBarcode={cloudInvoiceBarcode}
+      displayName={displayName}
+      dreams={dreams}
+      fixedEntries={financialEntries.filter(
+        (entry) => entry.kind === "income" || entry.kind === "expense",
+      )}
+      fixedExpenseColor={fixedExpenseColor}
+      fixedIncomeColor={fixedIncomeColor}
+      monthlyIncome={monthlyIncome}
+      monthlyExpenses={monthlyExpenses}
+      languagePreference={languagePreference}
+      reminders={reminders}
+      saving={saving}
+      onAddCategory={createTransactionCategory}
+      onDeleteCategory={deleteTransactionCategory}
+      onDeleteFixedEntry={deleteFixedEntry}
+      onDeleteLocalData={deleteLocalData}
+      onDeleteReminder={deleteReminder}
+      onSaveFixedEntry={saveFixedEntry}
+      onSaveReminder={saveReminder}
+      onUpdateCategory={updateTransactionCategory}
+      onUpdateFixedColor={updateFixedFinanceColor}
+      onUpdateLanguage={updateLanguagePreference}
+      onUpdateProfile={updateProfile}
+      setActiveTab={setActiveTab}
+    />
+  );
 }
 
-function MainTabs({ activeTab, setActiveTab }: { activeTab: TabKey; setActiveTab: (tab: TabKey) => void }) {
-  return <View style={styles.tabBar}>{tabs.map((tab) => <Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{ selected: tab.key === activeTab }} onPress={() => setActiveTab(tab.key)} style={styles.tab}><Text style={[styles.icon, tab.key === activeTab && styles.active]}>{tab.icon}</Text><Text style={[styles.tabText, tab.key === activeTab && styles.active]}>{tab.label}</Text></Pressable>)}</View>;
+function MainTabs({
+  activeTab,
+  setActiveTab,
+}: {
+  activeTab: TabKey;
+  setActiveTab: (tab: TabKey) => void;
+}) {
+  return (
+    <View style={styles.tabBar}>
+      {tabs.map((tab) => (
+        <Pressable
+          key={tab.key}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: tab.key === activeTab }}
+          onPress={() => setActiveTab(tab.key)}
+          style={styles.tab}
+        >
+          <Text style={[styles.icon, tab.key === activeTab && styles.active]}>
+            {tab.icon}
+          </Text>
+          <Text
+            style={[styles.tabText, tab.key === activeTab && styles.active]}
+          >
+            {tab.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
-function FinanceHome({ entries, isSaving, onAddEntry, onDeleteEntry, onUpdateEntry, setActiveTab }: { entries: ReadonlyArray<FinancialEntry>; isSaving: boolean; onAddEntry: (kind: 'asset' | 'liability', category: string, entryAmount: number) => Promise<boolean>; onDeleteEntry: (id: number) => Promise<boolean>; onUpdateEntry: (id: number, kind: 'asset' | 'liability', category: string, entryAmount: number) => Promise<boolean>; setActiveTab: (tab: TabKey) => void }) {
+function FinanceHome({
+  entries,
+  isSaving,
+  onAddEntry,
+  onDeleteEntry,
+  onUpdateEntry,
+  setActiveTab,
+}: {
+  entries: ReadonlyArray<FinancialEntry>;
+  isSaving: boolean;
+  onAddEntry: (
+    kind: "asset" | "liability",
+    category: string,
+    entryAmount: number,
+  ) => Promise<boolean>;
+  onDeleteEntry: (id: number) => Promise<boolean>;
+  onUpdateEntry: (
+    id: number,
+    kind: "asset" | "liability",
+    category: string,
+    entryAmount: number,
+  ) => Promise<boolean>;
+  setActiveTab: (tab: TabKey) => void;
+}) {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<FinancialEntry | null>(null);
-  const [pendingDeleteEntry, setPendingDeleteEntry] = useState<FinancialEntry | null>(null);
-  const assets = entries.filter((entry) => entry.kind === 'asset');
-  const liabilities = entries.filter((entry) => entry.kind === 'liability');
+  const [pendingDeleteEntry, setPendingDeleteEntry] =
+    useState<FinancialEntry | null>(null);
+  const assets = entries.filter((entry) => entry.kind === "asset");
+  const liabilities = entries.filter((entry) => entry.kind === "liability");
   const equityTotal = assets.reduce((sum, entry) => sum + entry.amount, 0);
-  const liabilityTotal = liabilities.reduce((sum, entry) => sum + entry.amount, 0);
+  const liabilityTotal = liabilities.reduce(
+    (sum, entry) => sum + entry.amount,
+    0,
+  );
   const totalAssets = liabilityTotal + equityTotal;
   const liabilityRatio = totalAssets === 0 ? 0 : liabilityTotal / totalAssets;
-  const edit = (entry: FinancialEntry): void => { setEditingEntry(entry); setIsFormOpen(true); };
-  const closeForm = (): void => { setIsFormOpen(false); setEditingEntry(null); };
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><View><Text style={styles.pageTitle}>資產負債表</Text><Text style={styles.pageSubtitle}>總資產 ＝ 總負債 ＋ 總個人權益</Text></View></View><View style={styles.balanceCard}><Donut liabilityRatio={liabilityRatio} total={totalAssets} /><View style={styles.balanceLegend}><Text style={styles.cardTitle}>資金來源結構</Text><LegendRow color="#D76E62" label="總負債" value={liabilityTotal} /><LegendRow color="#087A50" label="總個人權益" value={equityTotal} /></View></View><FinanceSection title="個人權益" caption="你可支配的資源" entries={assets} color="#087A50" onDeleteEntry={setPendingDeleteEntry} onPressEntry={edit} /><FinanceSection title="負債" caption="需償還的項目" entries={liabilities} color="#B94743" onDeleteEntry={setPendingDeleteEntry} onPressEntry={edit} /><Pressable accessibilityRole="button" style={styles.financeAddButton} onPress={() => { setEditingEntry(null); setIsFormOpen(true); }}><Text style={styles.financeAddButtonText}>＋ 新增項目</Text></Pressable></ScrollView><MainTabs activeTab="finance" setActiveTab={setActiveTab} /><FinanceEntryForm key={editingEntry?.id ?? 'new'} initialEntry={editingEntry} isOpen={isFormOpen} isSaving={isSaving} onCancel={closeForm} onComplete={editingEntry === null ? onAddEntry : (kind, category, entryAmount) => onUpdateEntry(editingEntry.id, kind, category, entryAmount)} /><DeleteConfirmModal description="刪除後無法復原，資產負債表也會同步調整。" isOpen={pendingDeleteEntry !== null} isSaving={isSaving} onCancel={() => setPendingDeleteEntry(null)} onConfirm={() => { if (pendingDeleteEntry) void (async (): Promise<void> => { if (await onDeleteEntry(pendingDeleteEntry.id)) setPendingDeleteEntry(null); })(); }} /></View>;
+  const edit = (entry: FinancialEntry): void => {
+    setEditingEntry(entry);
+    setIsFormOpen(true);
+  };
+  const closeForm = (): void => {
+    setIsFormOpen(false);
+    setEditingEntry(null);
+  };
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <View style={styles.pageHeading}>
+          <View>
+            <Text style={styles.pageTitle}>資產負債表</Text>
+            <Text style={styles.pageSubtitle}>
+              總資產 ＝ 總負債 ＋ 總個人權益
+            </Text>
+          </View>
+        </View>
+        <View style={styles.balanceCard}>
+          <Donut liabilityRatio={liabilityRatio} total={totalAssets} />
+          <View style={styles.balanceLegend}>
+            <Text style={styles.cardTitle}>資金來源結構</Text>
+            <LegendRow color="#D76E62" label="總負債" value={liabilityTotal} />
+            <LegendRow color="#087A50" label="總個人權益" value={equityTotal} />
+          </View>
+        </View>
+        <FinanceSection
+          title="個人權益"
+          caption="你可支配的資源"
+          entries={assets}
+          color="#087A50"
+          onDeleteEntry={setPendingDeleteEntry}
+          onPressEntry={edit}
+        />
+        <FinanceSection
+          title="負債"
+          caption="需償還的項目"
+          entries={liabilities}
+          color="#B94743"
+          onDeleteEntry={setPendingDeleteEntry}
+          onPressEntry={edit}
+        />
+        <Pressable
+          accessibilityRole="button"
+          style={styles.financeAddButton}
+          onPress={() => {
+            setEditingEntry(null);
+            setIsFormOpen(true);
+          }}
+        >
+          <Text style={styles.financeAddButtonText}>＋ 新增項目</Text>
+        </Pressable>
+      </ScrollView>
+      <MainTabs activeTab="finance" setActiveTab={setActiveTab} />
+      <FinanceEntryForm
+        key={editingEntry?.id ?? "new"}
+        initialEntry={editingEntry}
+        isOpen={isFormOpen}
+        isSaving={isSaving}
+        onCancel={closeForm}
+        onComplete={
+          editingEntry === null
+            ? onAddEntry
+            : (kind, category, entryAmount) =>
+                onUpdateEntry(editingEntry.id, kind, category, entryAmount)
+        }
+      />
+      <DeleteConfirmModal
+        description="刪除後無法復原，資產負債表也會同步調整。"
+        isOpen={pendingDeleteEntry !== null}
+        isSaving={isSaving}
+        onCancel={() => setPendingDeleteEntry(null)}
+        onConfirm={() => {
+          if (pendingDeleteEntry)
+            void (async (): Promise<void> => {
+              if (await onDeleteEntry(pendingDeleteEntry.id))
+                setPendingDeleteEntry(null);
+            })();
+        }}
+      />
+    </View>
+  );
 }
-function Donut({ liabilityRatio, total }: { liabilityRatio: number; total: number }) {
+function Donut({
+  liabilityRatio,
+  total,
+}: {
+  liabilityRatio: number;
+  total: number;
+}) {
   const circumference = 2 * Math.PI * 46;
-  return <View style={styles.donutWrap}><Svg height={118} width={118} viewBox="0 0 108 108"><Circle cx="54" cy="54" fill="none" r="46" stroke="#DDEDE4" strokeWidth="14" /><Circle cx="54" cy="54" fill="none" r="46" rotation="-90" origin="54, 54" stroke="#D76E62" strokeDasharray={`${circumference * liabilityRatio} ${circumference}`} strokeLinecap="round" strokeWidth="14" /></Svg><View pointerEvents="none" style={styles.donutLabel}><Text style={styles.donutCaption}>總資產</Text><Text style={styles.donutValue}>{money(total)}</Text></View></View>;
+  return (
+    <View style={styles.donutWrap}>
+      <Svg height={118} width={118} viewBox="0 0 108 108">
+        <Circle
+          cx="54"
+          cy="54"
+          fill="none"
+          r="46"
+          stroke="#DDEDE4"
+          strokeWidth="14"
+        />
+        <Circle
+          cx="54"
+          cy="54"
+          fill="none"
+          r="46"
+          rotation="-90"
+          origin="54, 54"
+          stroke="#D76E62"
+          strokeDasharray={`${circumference * liabilityRatio} ${circumference}`}
+          strokeLinecap="round"
+          strokeWidth="14"
+        />
+      </Svg>
+      <View pointerEvents="none" style={styles.donutLabel}>
+        <Text style={styles.donutCaption}>總資產</Text>
+        <Text style={styles.donutValue}>{money(total)}</Text>
+      </View>
+    </View>
+  );
 }
-function LegendRow({ color, label, value }: { color: string; label: string; value: number }) { return <View style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: color }]} /><Text style={styles.legendLabel}>{label}</Text><Text style={styles.legendValue}>{money(value)}</Text></View>; }
-function FinanceSection({ title, caption, entries, color, onDeleteEntry, onPressEntry }: { title: string; caption: string; entries: ReadonlyArray<FinancialEntry>; color: string; onDeleteEntry: (entry: FinancialEntry) => void; onPressEntry: (entry: FinancialEntry) => void }) {
-  return <><View style={styles.sectionHeading}><Text style={styles.sectionHeadingText}>{title}</Text><Text style={styles.sectionCaption}>{caption}</Text></View><View style={styles.financeList}>{entries.map((entry) => <SwipeableFinanceRow color={color} entry={entry} key={entry.id} onDelete={() => onDeleteEntry(entry)} onPress={() => onPressEntry(entry)} />)}</View></>;
+function LegendRow({
+  color,
+  label,
+  value,
+}: {
+  color: string;
+  label: string;
+  value: number;
+}) {
+  return (
+    <View style={styles.legendRow}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendLabel}>{label}</Text>
+      <Text style={styles.legendValue}>{money(value)}</Text>
+    </View>
+  );
 }
-function SwipeableFinanceRow({ color, entry, onDelete, onPress }: { color: string; entry: FinancialEntry; onDelete: () => void; onPress: () => void }) {
+function FinanceSection({
+  title,
+  caption,
+  entries,
+  color,
+  onDeleteEntry,
+  onPressEntry,
+}: {
+  title: string;
+  caption: string;
+  entries: ReadonlyArray<FinancialEntry>;
+  color: string;
+  onDeleteEntry: (entry: FinancialEntry) => void;
+  onPressEntry: (entry: FinancialEntry) => void;
+}) {
+  return (
+    <>
+      <View style={styles.sectionHeading}>
+        <Text style={styles.sectionHeadingText}>{title}</Text>
+        <Text style={styles.sectionCaption}>{caption}</Text>
+      </View>
+      <View style={styles.financeList}>
+        {entries.map((entry) => (
+          <SwipeableFinanceRow
+            color={color}
+            entry={entry}
+            key={entry.id}
+            onDelete={() => onDeleteEntry(entry)}
+            onPress={() => onPressEntry(entry)}
+          />
+        ))}
+      </View>
+    </>
+  );
+}
+function SwipeableFinanceRow({
+  color,
+  entry,
+  onDelete,
+  onPress,
+}: {
+  color: string;
+  entry: FinancialEntry;
+  onDelete: () => void;
+  onPress: () => void;
+}) {
   const protectedEntry = isSystemFinancialEntry(entry);
   const translateX = useRef(new Animated.Value(0)).current;
-  const settle = (open: boolean): void => { Animated.spring(translateX, { friction: 8, tension: 90, toValue: open ? -76 : 0, useNativeDriver: true }).start(); };
-  const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => !protectedEntry && Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-    onMoveShouldSetPanResponderCapture: (_event, gesture) => !protectedEntry && Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
-    onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
-    onPanResponderTerminate: () => settle(false),
-    onPanResponderTerminationRequest: () => false,
-    onShouldBlockNativeResponder: () => true,
-  })).current;
-  return <View style={[styles.swipeRow, protectedEntry && styles.protectedSwipeRow]}>{!protectedEntry && <Pressable accessibilityLabel="刪除這筆財務項目" onPress={onDelete} style={styles.swipeDeleteAction}><Text style={styles.swipeDeleteIcon}>🗑️</Text></Pressable>}<Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}><Pressable accessibilityHint={protectedEntry ? '點擊可修改金額，系統項目名稱無法修改' : '點擊編輯，向左滑動可以刪除'} accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.financeRow, styles.swipeRowForeground, pressed && styles.financeRowPressed]}><View style={styles.financeRowIcon}><Text style={styles.financeRowIconText}>{entry.kind === 'asset' ? '◆' : '▤'}</Text></View><Text style={styles.financeRowName}>{entry.category}</Text>{protectedEntry && <Text style={styles.systemItemBadge}>預設</Text>}<Text style={[styles.financeRowAmount, { color }]}>{money(entry.amount)}</Text><Text style={styles.financeRowChevron}>›</Text></Pressable></Animated.View></View>;
+  const settle = (open: boolean): void => {
+    Animated.spring(translateX, {
+      friction: 8,
+      tension: 90,
+      toValue: open ? -76 : 0,
+      useNativeDriver: true,
+    }).start();
+  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        !protectedEntry &&
+        Math.abs(gesture.dx) > 8 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+        !protectedEntry &&
+        Math.abs(gesture.dx) > 8 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onPanResponderMove: (_event, gesture) =>
+        translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
+      onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
+      onPanResponderTerminate: () => settle(false),
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
+    }),
+  ).current;
+  return (
+    <View style={[styles.swipeRow, protectedEntry && styles.protectedSwipeRow]}>
+      {!protectedEntry && (
+        <Pressable
+          accessibilityLabel="刪除這筆財務項目"
+          onPress={onDelete}
+          style={styles.swipeDeleteAction}
+        >
+          <Text style={styles.swipeDeleteIcon}>🗑️</Text>
+        </Pressable>
+      )}
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={{ transform: [{ translateX }] }}
+      >
+        <Pressable
+          accessibilityHint={
+            protectedEntry
+              ? "點擊可修改金額，系統項目名稱無法修改"
+              : "點擊編輯，向左滑動可以刪除"
+          }
+          accessibilityRole="button"
+          onPress={onPress}
+          style={({ pressed }) => [
+            styles.financeRow,
+            styles.swipeRowForeground,
+            pressed && styles.financeRowPressed,
+          ]}
+        >
+          <View style={styles.financeRowIcon}>
+            <Text style={styles.financeRowIconText}>
+              {entry.kind === "asset" ? "◆" : "▤"}
+            </Text>
+          </View>
+          <Text style={styles.financeRowName}>{entry.category}</Text>
+          {protectedEntry && <Text style={styles.systemItemBadge}>預設</Text>}
+          <Text style={[styles.financeRowAmount, { color }]}>
+            {money(entry.amount)}
+          </Text>
+          <Text style={styles.financeRowChevron}>›</Text>
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
 }
-function FinanceEntryForm({ initialEntry, isOpen, isSaving, onCancel, onComplete }: { initialEntry: FinancialEntry | null; isOpen: boolean; isSaving: boolean; onCancel: () => void; onComplete: (kind: 'asset' | 'liability', category: string, entryAmount: number) => Promise<boolean> }) {
-  const initialKind = initialEntry?.kind === 'liability' ? 'liability' : 'asset';
-  const [kind, setKind] = useState<'asset' | 'liability'>(initialKind);
-  const [category, setCategory] = useState(initialEntry?.category ?? '');
-  const [entryAmount, setEntryAmount] = useState(initialEntry ? formatAmountInput(String(initialEntry.amount)) : '');
-  const protectedEntry = initialEntry !== null && isSystemFinancialEntry(initialEntry);
-  const close = (): void => { setKind('asset'); setCategory(''); setEntryAmount(''); onCancel(); };
+function FinanceEntryForm({
+  initialEntry,
+  isOpen,
+  isSaving,
+  onCancel,
+  onComplete,
+}: {
+  initialEntry: FinancialEntry | null;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onComplete: (
+    kind: "asset" | "liability",
+    category: string,
+    entryAmount: number,
+  ) => Promise<boolean>;
+}) {
+  const initialKind =
+    initialEntry?.kind === "liability" ? "liability" : "asset";
+  const [kind, setKind] = useState<"asset" | "liability">(initialKind);
+  const [category, setCategory] = useState(initialEntry?.category ?? "");
+  const [entryAmount, setEntryAmount] = useState(
+    initialEntry ? formatAmountInput(String(initialEntry.amount)) : "",
+  );
+  const protectedEntry =
+    initialEntry !== null && isSystemFinancialEntry(initialEntry);
+  const close = (): void => {
+    setKind("asset");
+    setCategory("");
+    setEntryAmount("");
+    onCancel();
+  };
   const submit = (): void => {
     const parsedAmount = amount(entryAmount);
-    if (category.trim() === '' || parsedAmount === null || parsedAmount === 0) { Alert.alert('請完成項目資料', '請輸入項目名稱與大於 0 的金額。'); return; }
+    if (category.trim() === "" || parsedAmount === null || parsedAmount === 0) {
+      Alert.alert("請完成項目資料", "請輸入項目名稱與大於 0 的金額。");
+      return;
+    }
     void (async (): Promise<void> => {
       const succeeded = await onComplete(kind, category.trim(), parsedAmount);
       if (succeeded) close();
     })();
   };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}><Text style={styles.modalTitle}>{initialEntry ? '編輯財務項目' : '新增財務項目'}</Text><Text style={styles.modalDescription}>{protectedEntry ? '這是系統預設項目，可調整金額，但無法修改名稱與類別。' : initialEntry ? '修改後會立即更新資產負債表。' : '新增後會立即更新資產負債表。'}</Text><Text style={styles.fieldLabel}>類別</Text><View style={styles.financeTypeSelector}><Pressable accessibilityRole="radio" accessibilityState={{ checked: kind === 'asset', disabled: protectedEntry }} disabled={protectedEntry} style={[styles.financeTypeOption, kind === 'asset' && styles.financeTypeOptionActive]} onPress={() => setKind('asset')}><Text style={[styles.financeTypeOptionText, kind === 'asset' && styles.financeTypeOptionTextActive]}>個人權益</Text></Pressable><Pressable accessibilityRole="radio" accessibilityState={{ checked: kind === 'liability', disabled: protectedEntry }} disabled={protectedEntry} style={[styles.financeTypeOption, kind === 'liability' && styles.financeTypeOptionActive]} onPress={() => setKind('liability')}><Text style={[styles.financeTypeOptionText, kind === 'liability' && styles.financeTypeOptionTextActive]}>負債</Text></Pressable></View><Text style={styles.fieldLabel}>名稱</Text><TextInput autoFocus={!protectedEntry} editable={!protectedEntry} placeholder={kind === 'asset' ? '例如：銀行存款' : '例如：信用卡'} placeholderTextColor="#9AA5B4" returnKeyType="next" style={[styles.modalInput, protectedEntry && styles.lockedInput]} value={category} onChangeText={setCategory} /><Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="numeric" placeholder="例如：50,000" placeholderTextColor="#9AA5B4" returnKeyType="done" style={styles.modalInput} value={entryAmount} onChangeText={(value) => setEntryAmount(formatAmountInput(value))} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={close}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.modalTitle}>
+                {initialEntry ? "編輯財務項目" : "新增財務項目"}
+              </Text>
+              <Text style={styles.modalDescription}>
+                {protectedEntry
+                  ? "這是系統預設項目，可調整金額，但無法修改名稱與類別。"
+                  : initialEntry
+                    ? "修改後會立即更新資產負債表。"
+                    : "新增後會立即更新資產負債表。"}
+              </Text>
+              <Text style={styles.fieldLabel}>類別</Text>
+              <View style={styles.financeTypeSelector}>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{
+                    checked: kind === "asset",
+                    disabled: protectedEntry,
+                  }}
+                  disabled={protectedEntry}
+                  style={[
+                    styles.financeTypeOption,
+                    kind === "asset" && styles.financeTypeOptionActive,
+                  ]}
+                  onPress={() => setKind("asset")}
+                >
+                  <Text
+                    style={[
+                      styles.financeTypeOptionText,
+                      kind === "asset" && styles.financeTypeOptionTextActive,
+                    ]}
+                  >
+                    個人權益
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{
+                    checked: kind === "liability",
+                    disabled: protectedEntry,
+                  }}
+                  disabled={protectedEntry}
+                  style={[
+                    styles.financeTypeOption,
+                    kind === "liability" && styles.financeTypeOptionActive,
+                  ]}
+                  onPress={() => setKind("liability")}
+                >
+                  <Text
+                    style={[
+                      styles.financeTypeOptionText,
+                      kind === "liability" &&
+                        styles.financeTypeOptionTextActive,
+                    ]}
+                  >
+                    負債
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.fieldLabel}>名稱</Text>
+              <TextInput
+                autoFocus={!protectedEntry}
+                editable={!protectedEntry}
+                placeholder={
+                  kind === "asset" ? "例如：銀行存款" : "例如：信用卡"
+                }
+                placeholderTextColor="#9AA5B4"
+                returnKeyType="next"
+                style={[
+                  styles.modalInput,
+                  protectedEntry && styles.lockedInput,
+                ]}
+                value={category}
+                onChangeText={setCategory}
+              />
+              <Text style={styles.fieldLabel}>金額</Text>
+              <TextInput
+                keyboardType="numeric"
+                placeholder="例如：50,000"
+                placeholderTextColor="#9AA5B4"
+                returnKeyType="done"
+                style={styles.modalInput}
+                value={entryAmount}
+                onChangeText={(value) =>
+                  setEntryAmount(formatAmountInput(value))
+                }
+              />
+              <Pressable
+                disabled={isSaving}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+                onPress={submit}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>完成</Text>
+                )}
+              </Pressable>
+              <Pressable
+                disabled={isSaving}
+                style={styles.modalCancelButton}
+                onPress={close}
+              >
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 
-function CalendarHome({ categories, fixedEntries, fixedExpenseColor, fixedIncomeColor, isSaving, monthlyExpenses, monthlyIncome, onAddTransaction, onDeleteTransaction, onUpdateTransaction, setActiveTab, transactions }: { categories: ReadonlyArray<TransactionCategory>; fixedEntries: ReadonlyArray<FinancialEntry>; fixedExpenseColor: string; fixedIncomeColor: string; isSaving: boolean; monthlyExpenses: number; monthlyIncome: number; onDeleteTransaction: (id: number) => Promise<boolean>; onAddTransaction: (kind: TransactionKind, category: string, transactionAmount: number, note: string, occurredAt: string, paymentMethod: PaymentMethod | null) => Promise<boolean>; onUpdateTransaction: (input: CalendarTransactionUpdate) => Promise<boolean>; setActiveTab: (tab: TabKey) => void; transactions: ReadonlyArray<CalendarTransaction> }) {
+function CalendarHome({
+  categories,
+  fixedEntries,
+  fixedExpenseColor,
+  fixedIncomeColor,
+  isSaving,
+  monthlyExpenses,
+  monthlyIncome,
+  onAddTransaction,
+  onDeleteTransaction,
+  onUpdateTransaction,
+  setActiveTab,
+  transactions,
+}: {
+  categories: ReadonlyArray<TransactionCategory>;
+  fixedEntries: ReadonlyArray<FinancialEntry>;
+  fixedExpenseColor: string;
+  fixedIncomeColor: string;
+  isSaving: boolean;
+  monthlyExpenses: number;
+  monthlyIncome: number;
+  onDeleteTransaction: (id: number) => Promise<boolean>;
+  onAddTransaction: (
+    kind: TransactionKind,
+    category: string,
+    transactionAmount: number,
+    note: string,
+    occurredAt: string,
+    paymentMethod: PaymentMethod | null,
+  ) => Promise<boolean>;
+  onUpdateTransaction: (input: CalendarTransactionUpdate) => Promise<boolean>;
+  setActiveTab: (tab: TabKey) => void;
+  transactions: ReadonlyArray<CalendarTransaction>;
+}) {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
@@ -783,170 +2145,2629 @@ function CalendarHome({ categories, fixedEntries, fixedExpenseColor, fixedIncome
   const [pendingMonth, setPendingMonth] = useState(selectedMonth);
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [selectedTransaction, setSelectedTransaction] = useState<CalendarTransaction | null>(null);
-  const [pendingDeleteTransaction, setPendingDeleteTransaction] = useState<CalendarTransaction | null>(null);
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<CalendarTransaction | null>(null);
+  const [pendingDeleteTransaction, setPendingDeleteTransaction] =
+    useState<CalendarTransaction | null>(null);
   const days = new Date(selectedYear, selectedMonth + 1, 0).getDate();
   const leading = new Date(selectedYear, selectedMonth, 1).getDay();
-  const calendarCells: ReadonlyArray<number | null> = [...Array.from({ length: leading }, () => null), ...Array.from({ length: days }, (_, index) => index + 1)];
-  const transactionsForDay = (day: number): ReadonlyArray<CalendarTransaction> => transactions.filter((transaction) => { const date = new Date(transaction.occurred_at); return date.getFullYear() === selectedYear && date.getMonth() === selectedMonth && date.getDate() === day; });
+  const calendarCells: ReadonlyArray<number | null> = [
+    ...Array.from({ length: leading }, () => null),
+    ...Array.from({ length: days }, (_, index) => index + 1),
+  ];
+  const transactionsForDay = (
+    day: number,
+  ): ReadonlyArray<CalendarTransaction> =>
+    transactions.filter((transaction) => {
+      const date = new Date(transaction.occurred_at);
+      return (
+        date.getFullYear() === selectedYear &&
+        date.getMonth() === selectedMonth &&
+        date.getDate() === day
+      );
+    });
   const selectedTransactions = transactionsForDay(selectedDay);
-  const selectedIncome = selectedTransactions.filter((transaction) => transaction.kind === 'income');
-  const selectedExpenses = selectedTransactions.filter((transaction) => transaction.kind === 'expense');
-  const openMonthPicker = (): void => { setPendingYear(selectedYear); setPendingMonth(selectedMonth); setIsMonthPickerOpen(true); };
-  const selectedDateLabel = `${selectedMonth + 1} 月 ${selectedDay} 日`;
-  const selectedDate = new Date(selectedYear, selectedMonth, selectedDay, now.getHours(), now.getMinutes(), now.getSeconds());
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><Text style={styles.pageTitle}>收支日曆</Text><Pressable accessibilityRole="button" style={styles.monthSelectButton} onPress={openMonthPicker}><Text style={styles.monthSelectText}>{selectedYear} 年 {selectedMonth + 1} 月</Text><Text style={styles.monthSelectChevron}>⌄</Text></Pressable></View><View style={styles.calendarLegend}><LegendChip color="#087A50" label="收入" /><LegendChip color="#D76E62" label="支出" /><LegendChip color={fixedIncomeColor} label="固定收入" /><LegendChip color={fixedExpenseColor} label="固定支出" /></View><View style={styles.calendarCard}><View style={styles.weekRow}>{['日','一','二','三','四','五','六'].map((day) => <Text key={day} style={styles.weekText}>{day}</Text>)}</View><View style={styles.calendarGrid}>{calendarCells.map((day, index) => { const dailyTransactions = day === null ? [] : transactionsForDay(day); const incomeTotal = dailyTransactions.filter((transaction) => transaction.kind === 'income').reduce((sum, transaction) => sum + transaction.amount, 0); const expenseTotal = dailyTransactions.filter((transaction) => transaction.kind === 'expense').reduce((sum, transaction) => sum + transaction.amount, 0); const isToday = day === now.getDate() && selectedYear === now.getFullYear() && selectedMonth === now.getMonth(); const isSelected = day === selectedDay; const dailyFixedEntries = day === null ? [] : fixedEntries.filter((entry) => Math.min(entry.day_of_month, days) === day); return <Pressable disabled={day === null} key={`${day ?? 'empty'}-${index}`} onPress={() => { if (day !== null) setSelectedDay(day); }} style={[styles.calendarDay, styles.calendarDayWithTotals, isToday && styles.calendarToday, isSelected && styles.calendarSelected]}><Text style={[styles.calendarDayText, isToday && styles.calendarTodayText, isSelected && styles.calendarSelectedText]}>{day ?? ''}</Text>{incomeTotal > 0 && <Text numberOfLines={1} style={styles.calendarIncomeAmount}>+{compactAmount(incomeTotal)}</Text>}{expenseTotal > 0 && <Text numberOfLines={1} style={styles.calendarExpenseAmount}>−{compactAmount(expenseTotal)}</Text>}<View style={styles.fixedCalendarMarks}>{dailyFixedEntries.slice(0, 4).map((entry) => <View key={entry.id} style={[styles.fixedCalendarDot, { backgroundColor: entry.kind === 'income' ? fixedIncomeColor : fixedExpenseColor }]} />)}</View></Pressable>; })}</View></View><Text style={styles.activityTitle}>每月固定收支總和</Text><View style={styles.fixedFinanceGrid}><FixedFinanceCard amount={monthlyIncome} color={fixedIncomeColor} dateLabel={`${fixedEntries.filter((entry) => entry.kind === 'income').length} 個項目`} label="每月固定收入總和" /><FixedFinanceCard amount={monthlyExpenses} color={fixedExpenseColor} dateLabel={`${fixedEntries.filter((entry) => entry.kind === 'expense').length} 個項目`} label="每月固定支出總和" /></View><TransactionSection onDeleteRequest={setPendingDeleteTransaction} onSelect={setSelectedTransaction} title={`本日收入記錄・${selectedDateLabel}`} transactions={selectedIncome} /><TransactionSection onDeleteRequest={setPendingDeleteTransaction} onSelect={setSelectedTransaction} title={`本日支出記錄・${selectedDateLabel}`} transactions={selectedExpenses} /><Pressable accessibilityRole="button" style={styles.financeAddButton} onPress={() => setIsFormOpen(true)}><Text style={styles.financeAddButtonText}>＋ 新增項目</Text></Pressable></ScrollView><MainTabs activeTab="calendar" setActiveTab={setActiveTab} /><MonthPickerModal isOpen={isMonthPickerOpen} month={pendingMonth} onCancel={() => setIsMonthPickerOpen(false)} onConfirm={() => { setSelectedYear(pendingYear); setSelectedMonth(pendingMonth); setSelectedDay(pendingYear === now.getFullYear() && pendingMonth === now.getMonth() ? now.getDate() : 1); setIsMonthPickerOpen(false); }} onMonthChange={setPendingMonth} onYearChange={setPendingYear} year={pendingYear} /><CalendarEntryForm categories={categories} isOpen={isFormOpen} isSaving={isSaving} onCancel={() => setIsFormOpen(false)} onComplete={async (kind, category, transactionAmount, note, paymentMethod) => { const succeeded = await onAddTransaction(kind, category, transactionAmount, note, selectedDate.toISOString(), paymentMethod); if (succeeded) setIsFormOpen(false); return succeeded; }} /><DeleteTransactionModal isOpen={pendingDeleteTransaction !== null} isSaving={isSaving} onCancel={() => setPendingDeleteTransaction(null)} onConfirm={() => { if (pendingDeleteTransaction) { void (async (): Promise<void> => { if (await onDeleteTransaction(pendingDeleteTransaction.id)) setPendingDeleteTransaction(null); })(); } }} /><TransactionDetailModal categories={categories} isOpen={selectedTransaction !== null} isSaving={isSaving} onCancel={() => setSelectedTransaction(null)} onSave={async (input) => { const succeeded = await onUpdateTransaction(input); if (succeeded) { const updated = new Date(input.occurredAt); setSelectedYear(updated.getFullYear()); setSelectedMonth(updated.getMonth()); setSelectedDay(updated.getDate()); setSelectedTransaction(null); } return succeeded; }} transaction={selectedTransaction} /></View>;
+  const selectedIncome = selectedTransactions.filter(
+    (transaction) => transaction.kind === "income",
+  );
+  const selectedExpenses = selectedTransactions.filter(
+    (transaction) => transaction.kind === "expense",
+  );
+  const openMonthPicker = (): void => {
+    setPendingYear(selectedYear);
+    setPendingMonth(selectedMonth);
+    setIsMonthPickerOpen(true);
+  };
+  const selectedDateLabel = new Date(selectedYear, selectedMonth, selectedDay).toLocaleDateString(appLocale, {
+    day: "numeric",
+    month: "long",
+  });
+  const selectedDate = new Date(
+    selectedYear,
+    selectedMonth,
+    selectedDay,
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+  );
+  const displayedMonth = new Date(selectedYear, selectedMonth, 1).toLocaleDateString(appLocale, {
+    month: "long",
+    year: "numeric",
+  });
+  const weekdayLabels = appLanguage === "zh-Hant" ? ["日", "一", "二", "三", "四", "五", "六"] : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <View style={styles.pageHeading}>
+          <Text style={styles.pageTitle}>收支日曆</Text>
+          <Pressable
+            accessibilityRole="button"
+            style={styles.monthSelectButton}
+            onPress={openMonthPicker}
+          >
+            <Text style={styles.monthSelectText}>
+              {displayedMonth}
+            </Text>
+            <Text style={styles.monthSelectChevron}>⌄</Text>
+          </Pressable>
+        </View>
+        <View style={styles.calendarLegend}>
+          <LegendChip color="#087A50" label="收入" />
+          <LegendChip color="#D76E62" label="支出" />
+          <LegendChip color={fixedIncomeColor} label="固定收入" />
+          <LegendChip color={fixedExpenseColor} label="固定支出" />
+        </View>
+        <View style={styles.calendarCard}>
+          <View style={styles.weekRow}>
+            {weekdayLabels.map((day) => (
+              <Text key={day} style={styles.weekText}>
+                {day}
+              </Text>
+            ))}
+          </View>
+          <View style={styles.calendarGrid}>
+            {calendarCells.map((day, index) => {
+              const dailyTransactions =
+                day === null ? [] : transactionsForDay(day);
+              const incomeTotal = dailyTransactions
+                .filter((transaction) => transaction.kind === "income")
+                .reduce((sum, transaction) => sum + transaction.amount, 0);
+              const expenseTotal = dailyTransactions
+                .filter((transaction) => transaction.kind === "expense")
+                .reduce((sum, transaction) => sum + transaction.amount, 0);
+              const isToday =
+                day === now.getDate() &&
+                selectedYear === now.getFullYear() &&
+                selectedMonth === now.getMonth();
+              const isSelected = day === selectedDay;
+              const dailyFixedEntries =
+                day === null
+                  ? []
+                  : fixedEntries.filter(
+                      (entry) => Math.min(entry.day_of_month, days) === day,
+                    );
+              return (
+                <Pressable
+                  disabled={day === null}
+                  key={`${day ?? "empty"}-${index}`}
+                  onPress={() => {
+                    if (day !== null) setSelectedDay(day);
+                  }}
+                  style={[
+                    styles.calendarDay,
+                    styles.calendarDayWithTotals,
+                    isToday && styles.calendarToday,
+                    isSelected && styles.calendarSelected,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.calendarDayText,
+                      isToday && styles.calendarTodayText,
+                      isSelected && styles.calendarSelectedText,
+                    ]}
+                  >
+                    {day ?? ""}
+                  </Text>
+                  {incomeTotal > 0 && (
+                    <Text numberOfLines={1} style={styles.calendarIncomeAmount}>
+                      +{compactAmount(incomeTotal)}
+                    </Text>
+                  )}
+                  {expenseTotal > 0 && (
+                    <Text
+                      numberOfLines={1}
+                      style={styles.calendarExpenseAmount}
+                    >
+                      −{compactAmount(expenseTotal)}
+                    </Text>
+                  )}
+                  <View style={styles.fixedCalendarMarks}>
+                    {dailyFixedEntries.slice(0, 4).map((entry) => (
+                      <View
+                        key={entry.id}
+                        style={[
+                          styles.fixedCalendarDot,
+                          {
+                            backgroundColor:
+                              entry.kind === "income"
+                                ? fixedIncomeColor
+                                : fixedExpenseColor,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+        <Text style={styles.activityTitle}>每月固定收支總和</Text>
+        <View style={styles.fixedFinanceGrid}>
+          <FixedFinanceCard
+            amount={monthlyIncome}
+            color={fixedIncomeColor}
+            dateLabel={`${fixedEntries.filter((entry) => entry.kind === "income").length} 個項目`}
+            label="每月固定收入總和"
+          />
+          <FixedFinanceCard
+            amount={monthlyExpenses}
+            color={fixedExpenseColor}
+            dateLabel={`${fixedEntries.filter((entry) => entry.kind === "expense").length} 個項目`}
+            label="每月固定支出總和"
+          />
+        </View>
+        <TransactionSection
+          onDeleteRequest={setPendingDeleteTransaction}
+          onSelect={setSelectedTransaction}
+          title={`本日收入記錄・${selectedDateLabel}`}
+          transactions={selectedIncome}
+        />
+        <TransactionSection
+          onDeleteRequest={setPendingDeleteTransaction}
+          onSelect={setSelectedTransaction}
+          title={`本日支出記錄・${selectedDateLabel}`}
+          transactions={selectedExpenses}
+        />
+        <Pressable
+          accessibilityRole="button"
+          style={styles.financeAddButton}
+          onPress={() => setIsFormOpen(true)}
+        >
+          <Text style={styles.financeAddButtonText}>＋ 新增項目</Text>
+        </Pressable>
+      </ScrollView>
+      <MainTabs activeTab="calendar" setActiveTab={setActiveTab} />
+      <MonthPickerModal
+        isOpen={isMonthPickerOpen}
+        month={pendingMonth}
+        onCancel={() => setIsMonthPickerOpen(false)}
+        onConfirm={() => {
+          setSelectedYear(pendingYear);
+          setSelectedMonth(pendingMonth);
+          setSelectedDay(
+            pendingYear === now.getFullYear() && pendingMonth === now.getMonth()
+              ? now.getDate()
+              : 1,
+          );
+          setIsMonthPickerOpen(false);
+        }}
+        onMonthChange={setPendingMonth}
+        onYearChange={setPendingYear}
+        year={pendingYear}
+      />
+      <CalendarEntryForm
+        categories={categories}
+        isOpen={isFormOpen}
+        isSaving={isSaving}
+        onCancel={() => setIsFormOpen(false)}
+        onComplete={async (
+          kind,
+          category,
+          transactionAmount,
+          note,
+          paymentMethod,
+        ) => {
+          const succeeded = await onAddTransaction(
+            kind,
+            category,
+            transactionAmount,
+            note,
+            selectedDate.toISOString(),
+            paymentMethod,
+          );
+          if (succeeded) setIsFormOpen(false);
+          return succeeded;
+        }}
+      />
+      <DeleteTransactionModal
+        isOpen={pendingDeleteTransaction !== null}
+        isSaving={isSaving}
+        onCancel={() => setPendingDeleteTransaction(null)}
+        onConfirm={() => {
+          if (pendingDeleteTransaction) {
+            void (async (): Promise<void> => {
+              if (await onDeleteTransaction(pendingDeleteTransaction.id))
+                setPendingDeleteTransaction(null);
+            })();
+          }
+        }}
+      />
+      <TransactionDetailModal
+        categories={categories}
+        isOpen={selectedTransaction !== null}
+        isSaving={isSaving}
+        onCancel={() => setSelectedTransaction(null)}
+        onSave={async (input) => {
+          const succeeded = await onUpdateTransaction(input);
+          if (succeeded) {
+            const updated = new Date(input.occurredAt);
+            setSelectedYear(updated.getFullYear());
+            setSelectedMonth(updated.getMonth());
+            setSelectedDay(updated.getDate());
+            setSelectedTransaction(null);
+          }
+          return succeeded;
+        }}
+        transaction={selectedTransaction}
+      />
+    </View>
+  );
 }
-function FixedFinanceCard({ amount: cardAmount, color, dateLabel, label }: { amount: number; color: string; dateLabel: string; label: string }) { return <View style={[styles.fixedFinanceCard, { borderTopColor: color }]}><View style={styles.fixedFinanceCardHeader}><View style={[styles.fixedFinanceSwatch, { backgroundColor: color }]} /><Text style={styles.fixedFinanceLabel}>{label}</Text></View><Text style={styles.fixedFinanceAmount}>{preciseMoney(cardAmount)}</Text><Text style={styles.fixedFinanceDate}>{dateLabel}</Text></View>; }
-function compactAmount(value: number): string { return value >= 10000 ? `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k` : value.toLocaleString('zh-TW', { maximumFractionDigits: 1 }); }
-function LegendChip({ color, label }: { color: string; label: string }) { return <View style={styles.legendChip}><View style={[styles.legendDot, { backgroundColor: color }]} /><Text style={styles.legendChipText}>{label}</Text></View>; }
-function TransactionSection({ onDeleteRequest, onSelect, title, transactions }: { onDeleteRequest: (transaction: CalendarTransaction) => void; onSelect: (transaction: CalendarTransaction) => void; title: string; transactions: ReadonlyArray<CalendarTransaction> }) { return <><Text style={styles.activityTitle}>{title}</Text><View style={styles.transactionList}>{transactions.length === 0 ? <Text style={styles.emptyTransactionText}>這一天還沒有紀錄</Text> : transactions.map((transaction) => <SwipeableTransactionRow key={transaction.id} onDelete={() => onDeleteRequest(transaction)} onPress={() => onSelect(transaction)} transaction={transaction} />)}</View></>; }
-function SwipeableTransactionRow({ onDelete, onPress, transaction }: { onDelete: () => void; onPress: () => void; transaction: CalendarTransaction }) {
+function FixedFinanceCard({
+  amount: cardAmount,
+  color,
+  dateLabel,
+  label,
+}: {
+  amount: number;
+  color: string;
+  dateLabel: string;
+  label: string;
+}) {
+  return (
+    <View style={[styles.fixedFinanceCard, { borderTopColor: color }]}>
+      <View style={styles.fixedFinanceCardHeader}>
+        <View style={[styles.fixedFinanceSwatch, { backgroundColor: color }]} />
+        <Text style={styles.fixedFinanceLabel}>{label}</Text>
+      </View>
+      <Text style={styles.fixedFinanceAmount}>{preciseMoney(cardAmount)}</Text>
+      <Text style={styles.fixedFinanceDate}>{dateLabel}</Text>
+    </View>
+  );
+}
+function compactAmount(value: number): string {
+  return value >= 10000
+    ? `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}k`
+    : value.toLocaleString(appLocale, { maximumFractionDigits: 1 });
+}
+function LegendChip({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={styles.legendChip}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendChipText}>{label}</Text>
+    </View>
+  );
+}
+function TransactionSection({
+  onDeleteRequest,
+  onSelect,
+  title,
+  transactions,
+}: {
+  onDeleteRequest: (transaction: CalendarTransaction) => void;
+  onSelect: (transaction: CalendarTransaction) => void;
+  title: string;
+  transactions: ReadonlyArray<CalendarTransaction>;
+}) {
+  return (
+    <>
+      <Text style={styles.activityTitle}>{title}</Text>
+      <View style={styles.transactionList}>
+        {transactions.length === 0 ? (
+          <Text style={styles.emptyTransactionText}>這一天還沒有紀錄</Text>
+        ) : (
+          transactions.map((transaction) => (
+            <SwipeableTransactionRow
+              key={transaction.id}
+              onDelete={() => onDeleteRequest(transaction)}
+              onPress={() => onSelect(transaction)}
+              transaction={transaction}
+            />
+          ))
+        )}
+      </View>
+    </>
+  );
+}
+function SwipeableTransactionRow({
+  onDelete,
+  onPress,
+  transaction,
+}: {
+  onDelete: () => void;
+  onPress: () => void;
+  transaction: CalendarTransaction;
+}) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const settle = (open: boolean): void => { Animated.spring(translateX, { friction: 8, tension: 90, toValue: open ? -76 : 0, useNativeDriver: true }).start(); };
-  const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-    onMoveShouldSetPanResponderCapture: (_event, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
-    onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
-    onPanResponderTerminate: () => settle(false),
-    onPanResponderTerminationRequest: () => false,
-    onShouldBlockNativeResponder: () => true,
-  })).current;
-  return <View style={styles.swipeRow}><Pressable accessibilityLabel="刪除這筆記錄" onPress={onDelete} style={styles.swipeDeleteAction}><Text style={styles.swipeDeleteIcon}>🗑️</Text></Pressable><Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}><Pressable accessibilityHint="點擊查看詳情，向左滑動可以刪除" accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.transactionRow, styles.swipeRowForeground, pressed && styles.financeRowPressed]}><View style={[styles.transactionKindDot, { backgroundColor: transaction.kind === 'income' ? '#087A50' : '#D76E62' }]} /><View style={styles.transactionCopy}><Text style={styles.transactionCategory}>{transaction.category}</Text><Text numberOfLines={1} style={styles.transactionNote}>{transaction.kind === 'expense' && transaction.payment_method ? `${transaction.payment_method === 'cash' ? '現金' : '信用卡'}・` : ''}{transaction.note || '沒有備註'}・{new Date(transaction.occurred_at).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })}</Text></View><Text style={[styles.transactionAmount, { color: transaction.kind === 'income' ? '#087A50' : '#B94743' }]}>{transaction.kind === 'income' ? '+' : '−'}{preciseMoney(transaction.amount)}</Text></Pressable></Animated.View></View>;
+  const settle = (open: boolean): void => {
+    Animated.spring(translateX, {
+      friction: 8,
+      tension: 90,
+      toValue: open ? -76 : 0,
+      useNativeDriver: true,
+    }).start();
+  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onPanResponderMove: (_event, gesture) =>
+        translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
+      onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
+      onPanResponderTerminate: () => settle(false),
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
+    }),
+  ).current;
+  return (
+    <View style={styles.swipeRow}>
+      <Pressable
+        accessibilityLabel="刪除這筆記錄"
+        onPress={onDelete}
+        style={styles.swipeDeleteAction}
+      >
+        <Text style={styles.swipeDeleteIcon}>🗑️</Text>
+      </Pressable>
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={{ transform: [{ translateX }] }}
+      >
+        <Pressable
+          accessibilityHint="點擊查看詳情，向左滑動可以刪除"
+          accessibilityRole="button"
+          onPress={onPress}
+          style={({ pressed }) => [
+            styles.transactionRow,
+            styles.swipeRowForeground,
+            pressed && styles.financeRowPressed,
+          ]}
+        >
+          <View
+            style={[
+              styles.transactionKindDot,
+              {
+                backgroundColor:
+                  transaction.kind === "income" ? "#087A50" : "#D76E62",
+              },
+            ]}
+          />
+          <View style={styles.transactionCopy}>
+            <Text style={styles.transactionCategory}>
+              {transaction.category}
+            </Text>
+            <Text numberOfLines={1} style={styles.transactionNote}>
+              {transaction.kind === "expense" && transaction.payment_method
+                ? `${transaction.payment_method === "cash" ? "現金" : "信用卡"}・`
+                : ""}
+              {transaction.note || "沒有備註"}・
+              {new Date(transaction.occurred_at).toLocaleTimeString(appLocale, {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </Text>
+          </View>
+          <Text
+            style={[
+              styles.transactionAmount,
+              { color: transaction.kind === "income" ? "#087A50" : "#B94743" },
+            ]}
+          >
+            {transaction.kind === "income" ? "+" : "−"}
+            {preciseMoney(transaction.amount)}
+          </Text>
+        </Pressable>
+      </Animated.View>
+    </View>
+  );
 }
-function DeleteTransactionModal({ isOpen, isSaving, onCancel, onConfirm }: { isOpen: boolean; isSaving: boolean; onCancel: () => void; onConfirm: () => void }) {
-  return <Modal animationType="fade" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.deleteConfirmOverlay}><View style={styles.deleteConfirmCard}><View style={styles.deleteConfirmIcon}><Text style={styles.deleteConfirmIconText}>🗑️</Text></View><Text style={styles.deleteConfirmTitle}>你將刪除這筆資料</Text><Text style={styles.deleteConfirmDescription}>刪除後無法復原，相關的財務金額也會同步調整。</Text><View style={styles.deleteConfirmActions}><Pressable disabled={isSaving} onPress={onCancel} style={styles.deleteConfirmCancelButton}><Text style={styles.deleteConfirmCancelText}>取消</Text></Pressable><Pressable disabled={isSaving} onPress={onConfirm} style={[styles.deleteConfirmDeleteButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.deleteConfirmDeleteText}>確定</Text>}</Pressable></View></View></View></Modal>;
+function DeleteTransactionModal({
+  isOpen,
+  isSaving,
+  onCancel,
+  onConfirm,
+}: {
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal
+      animationType="fade"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <View style={styles.deleteConfirmOverlay}>
+        <View style={styles.deleteConfirmCard}>
+          <View style={styles.deleteConfirmIcon}>
+            <Text style={styles.deleteConfirmIconText}>🗑️</Text>
+          </View>
+          <Text style={styles.deleteConfirmTitle}>你將刪除這筆資料</Text>
+          <Text style={styles.deleteConfirmDescription}>
+            刪除後無法復原，相關的財務金額也會同步調整。
+          </Text>
+          <View style={styles.deleteConfirmActions}>
+            <Pressable
+              disabled={isSaving}
+              onPress={onCancel}
+              style={styles.deleteConfirmCancelButton}
+            >
+              <Text style={styles.deleteConfirmCancelText}>取消</Text>
+            </Pressable>
+            <Pressable
+              disabled={isSaving}
+              onPress={onConfirm}
+              style={[
+                styles.deleteConfirmDeleteButton,
+                isSaving && styles.disabled,
+              ]}
+            >
+              {isSaving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.deleteConfirmDeleteText}>確定</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 }
-function DeleteConfirmModal({ description, isOpen, isSaving, onCancel, onConfirm }: { description: string; isOpen: boolean; isSaving: boolean; onCancel: () => void; onConfirm: () => void }) {
-  return <Modal animationType="fade" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.deleteConfirmOverlay}><View style={styles.deleteConfirmCard}><View style={styles.deleteConfirmIcon}><Text style={styles.deleteConfirmIconText}>🗑️</Text></View><Text style={styles.deleteConfirmTitle}>你將刪除這筆資料</Text><Text style={styles.deleteConfirmDescription}>{description}</Text><View style={styles.deleteConfirmActions}><Pressable disabled={isSaving} onPress={onCancel} style={styles.deleteConfirmCancelButton}><Text style={styles.deleteConfirmCancelText}>取消</Text></Pressable><Pressable disabled={isSaving} onPress={onConfirm} style={[styles.deleteConfirmDeleteButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.deleteConfirmDeleteText}>確定</Text>}</Pressable></View></View></View></Modal>;
+function DeleteConfirmModal({
+  description,
+  isOpen,
+  isSaving,
+  onCancel,
+  onConfirm,
+}: {
+  description: string;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal
+      animationType="fade"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <View style={styles.deleteConfirmOverlay}>
+        <View style={styles.deleteConfirmCard}>
+          <View style={styles.deleteConfirmIcon}>
+            <Text style={styles.deleteConfirmIconText}>🗑️</Text>
+          </View>
+          <Text style={styles.deleteConfirmTitle}>你將刪除這筆資料</Text>
+          <Text style={styles.deleteConfirmDescription}>{description}</Text>
+          <View style={styles.deleteConfirmActions}>
+            <Pressable
+              disabled={isSaving}
+              onPress={onCancel}
+              style={styles.deleteConfirmCancelButton}
+            >
+              <Text style={styles.deleteConfirmCancelText}>取消</Text>
+            </Pressable>
+            <Pressable
+              disabled={isSaving}
+              onPress={onConfirm}
+              style={[
+                styles.deleteConfirmDeleteButton,
+                isSaving && styles.disabled,
+              ]}
+            >
+              {isSaving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.deleteConfirmDeleteText}>確定</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 }
-function TransactionDetailModal({ categories, isOpen, isSaving, onCancel, onSave, transaction }: { categories: ReadonlyArray<TransactionCategory>; isOpen: boolean; isSaving: boolean; onCancel: () => void; onSave: (input: CalendarTransactionUpdate) => Promise<boolean>; transaction: CalendarTransaction | null }) {
+function TransactionDetailModal({
+  categories,
+  isOpen,
+  isSaving,
+  onCancel,
+  onSave,
+  transaction,
+}: {
+  categories: ReadonlyArray<TransactionCategory>;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onSave: (input: CalendarTransactionUpdate) => Promise<boolean>;
+  transaction: CalendarTransaction | null;
+}) {
   const [occurredAt, setOccurredAt] = useState(new Date());
-  const [editedCategory, setEditedCategory] = useState('');
-  const [editedAmount, setEditedAmount] = useState('');
-  const [editedNote, setEditedNote] = useState('');
-  const [editedPaymentMethod, setEditedPaymentMethod] = useState<PaymentMethod>('cash');
-  useEffect(() => { if (transaction) { setOccurredAt(new Date(transaction.occurred_at)); setEditedCategory(transaction.category); setEditedAmount(formatDecimalInput(String(transaction.amount))); setEditedNote(transaction.note); setEditedPaymentMethod(isCreditCardRepayment(transaction.category) ? 'cash' : transaction.payment_method ?? 'cash'); } }, [transaction]);
+  const [editedCategory, setEditedCategory] = useState("");
+  const [editedAmount, setEditedAmount] = useState("");
+  const [editedNote, setEditedNote] = useState("");
+  const [editedPaymentMethod, setEditedPaymentMethod] =
+    useState<PaymentMethod>("cash");
+  useEffect(() => {
+    if (transaction) {
+      setOccurredAt(new Date(transaction.occurred_at));
+      setEditedCategory(transaction.category);
+      setEditedAmount(formatDecimalInput(String(transaction.amount)));
+      setEditedNote(transaction.note);
+      setEditedPaymentMethod(
+        isCreditCardRepayment(transaction.category)
+          ? "cash"
+          : (transaction.payment_method ?? "cash"),
+      );
+    }
+  }, [transaction]);
   if (transaction === null) return null;
-  const categoryOptions = categories.filter((category) => category.kind === transaction.kind);
-  const changeCategory = (nextCategory: string): void => { setEditedCategory(nextCategory); if (isCreditCardRepayment(nextCategory)) setEditedPaymentMethod('cash'); };
-  const save = (): void => { const parsedAmount = amount(editedAmount); if (editedCategory === '' || parsedAmount === null || parsedAmount === 0) { Alert.alert('請完成收支資料', '請選擇類別並輸入大於 0 的金額。'); return; } void onSave({ id: transaction.id, category: editedCategory, amount: parsedAmount, note: editedNote, occurredAt: occurredAt.toISOString(), paymentMethod: transaction.kind === 'expense' ? editedPaymentMethod : null }); };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}><Text style={styles.modalTitle}>{transaction.kind === 'income' ? '收入詳細內容' : '支出詳細內容'}</Text><Text style={styles.fieldLabel}>類別</Text><View style={styles.categoryPickerBox}><Picker selectedValue={editedCategory} onValueChange={(value: string) => changeCategory(value)}>{categoryOptions.map((option) => <Picker.Item key={option.id} label={option.name} value={option.name} />)}</Picker></View><Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="decimal-pad" placeholder="輸入金額" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={editedAmount} onChangeText={(value) => setEditedAmount(formatDecimalInput(value))} />{transaction.kind === 'expense' && <><Text style={styles.fieldLabel}>支出方式</Text><View style={styles.financeTypeSelector}><Pressable accessibilityRole="radio" accessibilityState={{ checked: editedPaymentMethod === 'cash' }} style={[styles.financeTypeOption, editedPaymentMethod === 'cash' && styles.financeTypeOptionActive]} onPress={() => setEditedPaymentMethod('cash')}><Text style={[styles.financeTypeOptionText, editedPaymentMethod === 'cash' && styles.financeTypeOptionTextActive]}>現金</Text></Pressable><Pressable accessibilityRole="radio" accessibilityState={{ checked: editedPaymentMethod === 'credit_card', disabled: isCreditCardRepayment(editedCategory) }} disabled={isCreditCardRepayment(editedCategory)} style={[styles.financeTypeOption, editedPaymentMethod === 'credit_card' && styles.financeTypeOptionActive, isCreditCardRepayment(editedCategory) && styles.disabled]} onPress={() => setEditedPaymentMethod('credit_card')}><Text style={[styles.financeTypeOptionText, editedPaymentMethod === 'credit_card' && styles.financeTypeOptionTextActive]}>信用卡</Text></Pressable></View></>}<Text style={styles.fieldLabel}>備註</Text><TextInput multiline placeholder="輸入備註" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={editedNote} onChangeText={setEditedNote} /><Text style={styles.fieldLabel}>日期</Text><View style={styles.transactionPickerBox}><DateTimePicker display="spinner" locale="zh-TW" mode="date" onValueChange={(_event, value) => { const next = new Date(occurredAt); next.setFullYear(value.getFullYear(), value.getMonth(), value.getDate()); setOccurredAt(next); }} value={occurredAt} /></View><Text style={styles.fieldLabel}>時間</Text><View style={styles.transactionPickerBox}><DateTimePicker display="spinner" locale="zh-TW" mode="time" onValueChange={(_event, value) => { const next = new Date(occurredAt); next.setHours(value.getHours(), value.getMinutes(), 0, 0); setOccurredAt(next); }} value={occurredAt} /></View><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={save}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>儲存變更</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={onCancel}><Text style={styles.modalCancelText}>關閉</Text></Pressable></ScrollView></View></View></Modal>;
+  const categoryOptions = categories.filter(
+    (category) => category.kind === transaction.kind,
+  );
+  const changeCategory = (nextCategory: string): void => {
+    setEditedCategory(nextCategory);
+    if (isCreditCardRepayment(nextCategory)) setEditedPaymentMethod("cash");
+  };
+  const save = (): void => {
+    const parsedAmount = amount(editedAmount);
+    if (editedCategory === "" || parsedAmount === null || parsedAmount === 0) {
+      Alert.alert("請完成收支資料", "請選擇類別並輸入大於 0 的金額。");
+      return;
+    }
+    void onSave({
+      id: transaction.id,
+      category: editedCategory,
+      amount: parsedAmount,
+      note: editedNote,
+      occurredAt: occurredAt.toISOString(),
+      paymentMethod:
+        transaction.kind === "expense" ? editedPaymentMethod : null,
+    });
+  };
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalSheet}>
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={styles.modalTitle}>
+              {transaction.kind === "income" ? "收入詳細內容" : "支出詳細內容"}
+            </Text>
+            <Text style={styles.fieldLabel}>類別</Text>
+            <View style={styles.categoryPickerBox}>
+              <Picker
+                selectedValue={editedCategory}
+                onValueChange={(value: string) => changeCategory(value)}
+              >
+                {categoryOptions.map((option) => (
+                  <Picker.Item
+                    key={option.id}
+                    label={option.name}
+                    value={option.name}
+                  />
+                ))}
+              </Picker>
+            </View>
+            <Text style={styles.fieldLabel}>金額</Text>
+            <TextInput
+              keyboardType="decimal-pad"
+              placeholder="輸入金額"
+              placeholderTextColor="#9AA5B4"
+              style={styles.modalInput}
+              value={editedAmount}
+              onChangeText={(value) =>
+                setEditedAmount(formatDecimalInput(value))
+              }
+            />
+            {transaction.kind === "expense" && (
+              <>
+                <Text style={styles.fieldLabel}>支出方式</Text>
+                <View style={styles.financeTypeSelector}>
+                  <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{
+                      checked: editedPaymentMethod === "cash",
+                    }}
+                    style={[
+                      styles.financeTypeOption,
+                      editedPaymentMethod === "cash" &&
+                        styles.financeTypeOptionActive,
+                    ]}
+                    onPress={() => setEditedPaymentMethod("cash")}
+                  >
+                    <Text
+                      style={[
+                        styles.financeTypeOptionText,
+                        editedPaymentMethod === "cash" &&
+                          styles.financeTypeOptionTextActive,
+                      ]}
+                    >
+                      現金
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{
+                      checked: editedPaymentMethod === "credit_card",
+                      disabled: isCreditCardRepayment(editedCategory),
+                    }}
+                    disabled={isCreditCardRepayment(editedCategory)}
+                    style={[
+                      styles.financeTypeOption,
+                      editedPaymentMethod === "credit_card" &&
+                        styles.financeTypeOptionActive,
+                      isCreditCardRepayment(editedCategory) && styles.disabled,
+                    ]}
+                    onPress={() => setEditedPaymentMethod("credit_card")}
+                  >
+                    <Text
+                      style={[
+                        styles.financeTypeOptionText,
+                        editedPaymentMethod === "credit_card" &&
+                          styles.financeTypeOptionTextActive,
+                      ]}
+                    >
+                      信用卡
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            )}
+            <Text style={styles.fieldLabel}>備註</Text>
+            <TextInput
+              multiline
+              placeholder="輸入備註"
+              placeholderTextColor="#9AA5B4"
+              style={[styles.modalInput, styles.noteInput]}
+              value={editedNote}
+              onChangeText={setEditedNote}
+            />
+            <Text style={styles.fieldLabel}>日期</Text>
+            <View style={styles.transactionPickerBox}>
+              <DateTimePicker
+                display="spinner"
+                mode="date"
+                onValueChange={(_event, value) => {
+                  const next = new Date(occurredAt);
+                  next.setFullYear(
+                    value.getFullYear(),
+                    value.getMonth(),
+                    value.getDate(),
+                  );
+                  setOccurredAt(next);
+                }}
+                value={occurredAt}
+              />
+            </View>
+            <Text style={styles.fieldLabel}>時間</Text>
+            <View style={styles.transactionPickerBox}>
+              <DateTimePicker
+                display="spinner"
+                mode="time"
+                onValueChange={(_event, value) => {
+                  const next = new Date(occurredAt);
+                  next.setHours(value.getHours(), value.getMinutes(), 0, 0);
+                  setOccurredAt(next);
+                }}
+                value={occurredAt}
+              />
+            </View>
+            <Pressable
+              disabled={isSaving}
+              style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+              onPress={save}
+            >
+              {isSaving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.buttonText}>儲存變更</Text>
+              )}
+            </Pressable>
+            <Pressable
+              disabled={isSaving}
+              style={styles.modalCancelButton}
+              onPress={onCancel}
+            >
+              <Text style={styles.modalCancelText}>關閉</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
 }
-function MonthPickerModal({ isOpen, month, onCancel, onConfirm, onMonthChange, onYearChange, year }: { isOpen: boolean; month: number; onCancel: () => void; onConfirm: () => void; onMonthChange: (month: number) => void; onYearChange: (year: number) => void; year: number }) {
+function MonthPickerModal({
+  isOpen,
+  month,
+  onCancel,
+  onConfirm,
+  onMonthChange,
+  onYearChange,
+  year,
+}: {
+  isOpen: boolean;
+  month: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onMonthChange: (month: number) => void;
+  onYearChange: (year: number) => void;
+  year: number;
+}) {
   const years = Array.from({ length: 131 }, (_, index) => 1970 + index);
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><View style={styles.modalOverlay}><View style={styles.pickerSheet}><Text style={styles.modalTitle}>選擇年月</Text><View style={styles.yearMonthPickers}><Picker selectedValue={year} style={styles.yearMonthPicker} onValueChange={(value: number) => onYearChange(value)}>{years.map((value) => <Picker.Item key={value} label={`${value} 年`} value={value} />)}</Picker><Picker selectedValue={month} style={styles.yearMonthPicker} onValueChange={(value: number) => onMonthChange(value)}>{Array.from({ length: 12 }, (_, index) => <Picker.Item key={index} label={`${index + 1} 月`} value={index} />)}</Picker></View><View style={styles.datePickerActions}><Pressable style={styles.datePickerCancel} onPress={onCancel}><Text style={styles.datePickerCancelText}>取消</Text></Pressable><Pressable style={styles.datePickerConfirm} onPress={onConfirm}><Text style={styles.datePickerConfirmText}>完成</Text></Pressable></View></View></View></Modal>;
+  const englishMonthAbbreviations: ReadonlyArray<string> = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.pickerSheet}>
+          <Text style={styles.modalTitle}>選擇年月</Text>
+          <View style={styles.yearMonthPickers}>
+            <Picker
+              selectedValue={year}
+              style={styles.yearMonthPicker}
+              onValueChange={(value: number) => onYearChange(value)}
+            >
+              {years.map((value) => (
+                <Picker.Item key={value} label={`${value}`} value={value} />
+              ))}
+            </Picker>
+            <Picker
+              selectedValue={month}
+              style={styles.yearMonthPicker}
+              onValueChange={(value: number) => onMonthChange(value)}
+            >
+              {Array.from({ length: 12 }, (_, index) => (
+                <Picker.Item
+                  key={index}
+                  label={
+                    appLanguage === "zh-Hant"
+                      ? `${index + 1} 月`
+                      : englishMonthAbbreviations[index]
+                  }
+                  value={index}
+                />
+              ))}
+            </Picker>
+          </View>
+          <View style={styles.datePickerActions}>
+            <Pressable style={styles.datePickerCancel} onPress={onCancel}>
+              <Text style={styles.datePickerCancelText}>取消</Text>
+            </Pressable>
+            <Pressable style={styles.datePickerConfirm} onPress={onConfirm}>
+              <Text style={styles.datePickerConfirmText}>完成</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 }
-function CalendarEntryForm({ categories, isOpen, isSaving, onCancel, onComplete }: { categories: ReadonlyArray<TransactionCategory>; isOpen: boolean; isSaving: boolean; onCancel: () => void; onComplete: (kind: TransactionKind, category: string, transactionAmount: number, note: string, paymentMethod: PaymentMethod | null) => Promise<boolean> }) {
-  const [kind, setKind] = useState<TransactionKind>('income');
+function CalendarEntryForm({
+  categories,
+  isOpen,
+  isSaving,
+  onCancel,
+  onComplete,
+}: {
+  categories: ReadonlyArray<TransactionCategory>;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onComplete: (
+    kind: TransactionKind,
+    category: string,
+    transactionAmount: number,
+    note: string,
+    paymentMethod: PaymentMethod | null,
+  ) => Promise<boolean>;
+}) {
+  const [kind, setKind] = useState<TransactionKind>("income");
   const options = categories.filter((category) => category.kind === kind);
-  const [category, setCategory] = useState('薪資');
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
-  const [transactionAmount, setTransactionAmount] = useState('');
-  const [note, setNote] = useState('');
-  const changeKind = (nextKind: TransactionKind): void => { setKind(nextKind); const firstCategory = categories.find((item) => item.kind === nextKind); setCategory(firstCategory?.name ?? ''); };
-  const changeCategory = (nextCategory: string): void => { setCategory(nextCategory); if (nextCategory === '信用卡還款') setPaymentMethod('cash'); };
-  const close = (): void => { setKind('income'); setCategory('薪資'); setPaymentMethod('cash'); setTransactionAmount(''); setNote(''); onCancel(); };
-  const submit = (): void => { const parsedAmount = amount(transactionAmount); if (category === '' || parsedAmount === null || parsedAmount === 0) { Alert.alert('請完成收支資料', '請選擇類別並輸入大於 0 的金額。'); return; } void (async (): Promise<void> => { const succeeded = await onComplete(kind, category, parsedAmount, note, kind === 'expense' ? paymentMethod : null); if (succeeded) close(); })(); };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>新增收支項目</Text><Text style={styles.modalDescription}>紀錄會依現在時間加入今天的收支。</Text><Text style={styles.fieldLabel}>項目類型</Text><View style={styles.financeTypeSelector}><Pressable style={[styles.financeTypeOption, kind === 'income' && styles.financeTypeOptionActive]} onPress={() => changeKind('income')}><Text style={[styles.financeTypeOptionText, kind === 'income' && styles.financeTypeOptionTextActive]}>收入</Text></Pressable><Pressable style={[styles.financeTypeOption, kind === 'expense' && styles.financeTypeOptionActive]} onPress={() => changeKind('expense')}><Text style={[styles.financeTypeOptionText, kind === 'expense' && styles.financeTypeOptionTextActive]}>支出</Text></Pressable></View><Text style={styles.fieldLabel}>類別</Text><View style={styles.categoryPickerBox}><Picker selectedValue={category} onValueChange={(value: string) => changeCategory(value)}>{options.map((option) => <Picker.Item key={option.id} label={option.name} value={option.name} />)}</Picker></View>{kind === 'expense' && <><Text style={styles.fieldLabel}>支出方式</Text><View style={styles.financeTypeSelector}><Pressable accessibilityRole="radio" accessibilityState={{ checked: paymentMethod === 'cash' }} style={[styles.financeTypeOption, paymentMethod === 'cash' && styles.financeTypeOptionActive]} onPress={() => setPaymentMethod('cash')}><Text style={[styles.financeTypeOptionText, paymentMethod === 'cash' && styles.financeTypeOptionTextActive]}>現金</Text></Pressable><Pressable accessibilityRole="radio" accessibilityState={{ checked: paymentMethod === 'credit_card', disabled: category === '信用卡還款' }} disabled={category === '信用卡還款'} style={[styles.financeTypeOption, paymentMethod === 'credit_card' && styles.financeTypeOptionActive, category === '信用卡還款' && styles.disabled]} onPress={() => setPaymentMethod('credit_card')}><Text style={[styles.financeTypeOptionText, paymentMethod === 'credit_card' && styles.financeTypeOptionTextActive]}>信用卡</Text></Pressable></View></>}<Text style={styles.fieldLabel}>金額</Text><TextInput keyboardType="decimal-pad" placeholder="例如：150.50" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={transactionAmount} onChangeText={(value) => setTransactionAmount(formatDecimalInput(value))} /><Text style={styles.fieldLabel}>備註</Text><TextInput multiline placeholder="輸入這筆收支的重點內容" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={note} onChangeText={setNote} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable disabled={isSaving} style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  const [category, setCategory] = useState("薪資");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("cash");
+  const [transactionAmount, setTransactionAmount] = useState("");
+  const [note, setNote] = useState("");
+  const changeKind = (nextKind: TransactionKind): void => {
+    setKind(nextKind);
+    const firstCategory = categories.find((item) => item.kind === nextKind);
+    setCategory(firstCategory?.name ?? "");
+  };
+  const changeCategory = (nextCategory: string): void => {
+    setCategory(nextCategory);
+    if (nextCategory === "信用卡還款") setPaymentMethod("cash");
+  };
+  const close = (): void => {
+    setKind("income");
+    setCategory("薪資");
+    setPaymentMethod("cash");
+    setTransactionAmount("");
+    setNote("");
+    onCancel();
+  };
+  const submit = (): void => {
+    const parsedAmount = amount(transactionAmount);
+    if (category === "" || parsedAmount === null || parsedAmount === 0) {
+      Alert.alert("請完成收支資料", "請選擇類別並輸入大於 0 的金額。");
+      return;
+    }
+    void (async (): Promise<void> => {
+      const succeeded = await onComplete(
+        kind,
+        category,
+        parsedAmount,
+        note,
+        kind === "expense" ? paymentMethod : null,
+      );
+      if (succeeded) close();
+    })();
+  };
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={close}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.modalTitle}>新增收支項目</Text>
+              <Text style={styles.modalDescription}>
+                紀錄會依現在時間加入今天的收支。
+              </Text>
+              <Text style={styles.fieldLabel}>項目類型</Text>
+              <View style={styles.financeTypeSelector}>
+                <Pressable
+                  style={[
+                    styles.financeTypeOption,
+                    kind === "income" && styles.financeTypeOptionActive,
+                  ]}
+                  onPress={() => changeKind("income")}
+                >
+                  <Text
+                    style={[
+                      styles.financeTypeOptionText,
+                      kind === "income" && styles.financeTypeOptionTextActive,
+                    ]}
+                  >
+                    收入
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.financeTypeOption,
+                    kind === "expense" && styles.financeTypeOptionActive,
+                  ]}
+                  onPress={() => changeKind("expense")}
+                >
+                  <Text
+                    style={[
+                      styles.financeTypeOptionText,
+                      kind === "expense" && styles.financeTypeOptionTextActive,
+                    ]}
+                  >
+                    支出
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.fieldLabel}>類別</Text>
+              <View style={styles.categoryPickerBox}>
+                <Picker
+                  selectedValue={category}
+                  onValueChange={(value: string) => changeCategory(value)}
+                >
+                  {options.map((option) => (
+                    <Picker.Item
+                      key={option.id}
+                      label={option.name}
+                      value={option.name}
+                    />
+                  ))}
+                </Picker>
+              </View>
+              {kind === "expense" && (
+                <>
+                  <Text style={styles.fieldLabel}>支出方式</Text>
+                  <View style={styles.financeTypeSelector}>
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: paymentMethod === "cash" }}
+                      style={[
+                        styles.financeTypeOption,
+                        paymentMethod === "cash" &&
+                          styles.financeTypeOptionActive,
+                      ]}
+                      onPress={() => setPaymentMethod("cash")}
+                    >
+                      <Text
+                        style={[
+                          styles.financeTypeOptionText,
+                          paymentMethod === "cash" &&
+                            styles.financeTypeOptionTextActive,
+                        ]}
+                      >
+                        現金
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{
+                        checked: paymentMethod === "credit_card",
+                        disabled: category === "信用卡還款",
+                      }}
+                      disabled={category === "信用卡還款"}
+                      style={[
+                        styles.financeTypeOption,
+                        paymentMethod === "credit_card" &&
+                          styles.financeTypeOptionActive,
+                        category === "信用卡還款" && styles.disabled,
+                      ]}
+                      onPress={() => setPaymentMethod("credit_card")}
+                    >
+                      <Text
+                        style={[
+                          styles.financeTypeOptionText,
+                          paymentMethod === "credit_card" &&
+                            styles.financeTypeOptionTextActive,
+                        ]}
+                      >
+                        信用卡
+                      </Text>
+                    </Pressable>
+                  </View>
+                </>
+              )}
+              <Text style={styles.fieldLabel}>金額</Text>
+              <TextInput
+                keyboardType="decimal-pad"
+                placeholder="例如：150.50"
+                placeholderTextColor="#9AA5B4"
+                style={styles.modalInput}
+                value={transactionAmount}
+                onChangeText={(value) =>
+                  setTransactionAmount(formatDecimalInput(value))
+                }
+              />
+              <Text style={styles.fieldLabel}>備註</Text>
+              <TextInput
+                multiline
+                placeholder="輸入這筆收支的重點內容"
+                placeholderTextColor="#9AA5B4"
+                style={[styles.modalInput, styles.noteInput]}
+                value={note}
+                onChangeText={setNote}
+              />
+              <Pressable
+                disabled={isSaving}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+                onPress={submit}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>完成</Text>
+                )}
+              </Pressable>
+              <Pressable
+                disabled={isSaving}
+                style={styles.modalCancelButton}
+                onPress={close}
+              >
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 
-type ProfilePage = 'main' | 'fixed-income' | 'fixed-expense' | 'categories-income' | 'categories-expense' | 'reminders' | 'data' | 'privacy';
-type FixedEntryInput = { id?: number; kind: TransactionKind; category: string; amount: number; dayOfMonth: number; note: string; color: string };
-function ProfileHome({ avatarUri, categories, cloudInvoiceBarcode, displayName, dreams, fixedEntries, fixedExpenseColor, fixedIncomeColor, monthlyIncome, monthlyExpenses, reminders, saving, onAddCategory, onDeleteCategory, onDeleteFixedEntry, onDeleteLocalData, onDeleteReminder, onSaveFixedEntry, onSaveReminder, onUpdateCategory, onUpdateFixedColor, onUpdateProfile, setActiveTab }: { avatarUri: string | null; categories: ReadonlyArray<TransactionCategory>; cloudInvoiceBarcode: string; displayName: string; dreams: ReadonlyArray<Dream>; fixedEntries: ReadonlyArray<FinancialEntry>; fixedExpenseColor: string; fixedIncomeColor: string; monthlyIncome: number; monthlyExpenses: number; reminders: ReadonlyArray<Reminder>; saving: boolean; onAddCategory: (kind: TransactionKind, name: string) => Promise<boolean>; onDeleteCategory: (id: number) => Promise<boolean>; onDeleteFixedEntry: (id: number) => Promise<boolean>; onDeleteLocalData: () => Promise<boolean>; onDeleteReminder: (id: number) => Promise<boolean>; onSaveFixedEntry: (entry: FixedEntryInput) => Promise<boolean>; onSaveReminder: (input: ReminderInput) => Promise<boolean>; onUpdateCategory: (id: number, name: string) => Promise<boolean>; onUpdateFixedColor: (kind: TransactionKind, color: string) => Promise<boolean>; onUpdateProfile: (name: string, avatar: string | null, cloudInvoiceBarcode: string) => Promise<boolean>; setActiveTab: (tab: TabKey) => void }) {
-  const [page, setPage] = useState<ProfilePage>('main');
+type ProfilePage =
+  | "main"
+  | "fixed-income"
+  | "fixed-expense"
+  | "categories-income"
+  | "categories-expense"
+  | "reminders"
+  | "language"
+  | "data"
+  | "privacy";
+type FixedEntryInput = {
+  id?: number;
+  kind: TransactionKind;
+  category: string;
+  amount: number;
+  dayOfMonth: number;
+  note: string;
+  color: string;
+};
+function ProfileHome({
+  avatarUri,
+  categories,
+  cloudInvoiceBarcode,
+  displayName,
+  dreams,
+  fixedEntries,
+  fixedExpenseColor,
+  fixedIncomeColor,
+  monthlyIncome,
+  monthlyExpenses,
+  languagePreference,
+  reminders,
+  saving,
+  onAddCategory,
+  onDeleteCategory,
+  onDeleteFixedEntry,
+  onDeleteLocalData,
+  onDeleteReminder,
+  onSaveFixedEntry,
+  onSaveReminder,
+  onUpdateCategory,
+  onUpdateFixedColor,
+  onUpdateLanguage,
+  onUpdateProfile,
+  setActiveTab,
+}: {
+  avatarUri: string | null;
+  categories: ReadonlyArray<TransactionCategory>;
+  cloudInvoiceBarcode: string;
+  displayName: string;
+  dreams: ReadonlyArray<Dream>;
+  fixedEntries: ReadonlyArray<FinancialEntry>;
+  fixedExpenseColor: string;
+  fixedIncomeColor: string;
+  monthlyIncome: number;
+  monthlyExpenses: number;
+  languagePreference: LanguagePreference;
+  reminders: ReadonlyArray<Reminder>;
+  saving: boolean;
+  onAddCategory: (kind: TransactionKind, name: string) => Promise<boolean>;
+  onDeleteCategory: (id: number) => Promise<boolean>;
+  onDeleteFixedEntry: (id: number) => Promise<boolean>;
+  onDeleteLocalData: () => Promise<boolean>;
+  onDeleteReminder: (id: number) => Promise<boolean>;
+  onSaveFixedEntry: (entry: FixedEntryInput) => Promise<boolean>;
+  onSaveReminder: (input: ReminderInput) => Promise<boolean>;
+  onUpdateCategory: (id: number, name: string) => Promise<boolean>;
+  onUpdateFixedColor: (
+    kind: TransactionKind,
+    color: string,
+  ) => Promise<boolean>;
+  onUpdateLanguage: (preference: LanguagePreference) => Promise<boolean>;
+  onUpdateProfile: (
+    name: string,
+    avatar: string | null,
+    cloudInvoiceBarcode: string,
+  ) => Promise<boolean>;
+  setActiveTab: (tab: TabKey) => void;
+}) {
+  const [page, setPage] = useState<ProfilePage>("main");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const initial = displayName.trim().slice(0, 1).toUpperCase() || '我';
-  if (page === 'fixed-income' || page === 'fixed-expense') { const kind: TransactionKind = page === 'fixed-income' ? 'income' : 'expense'; return <FixedEntryListPage categories={categories.filter((item) => item.kind === kind)} color={kind === 'income' ? fixedIncomeColor : fixedExpenseColor} entries={fixedEntries.filter((entry) => entry.kind === kind)} isSaving={saving} kind={kind} onBack={() => setPage('main')} onColorChange={onUpdateFixedColor} onDelete={onDeleteFixedEntry} onSave={onSaveFixedEntry} />; }
-  if (page === 'categories-income' || page === 'categories-expense') { const kind: TransactionKind = page === 'categories-income' ? 'income' : 'expense'; return <CategoryListPage categories={categories.filter((item) => item.kind === kind)} isSaving={saving} kind={kind} onAdd={onAddCategory} onBack={() => setPage('main')} onDelete={onDeleteCategory} onUpdate={onUpdateCategory} />; }
-  if (page === 'reminders') return <ReminderListPage isSaving={saving} onBack={() => setPage('main')} onDelete={onDeleteReminder} onSave={onSaveReminder} reminders={reminders} />;
-  if (page === 'data') return <DataSettingsPage isSaving={saving} onBack={() => setPage('main')} onDelete={onDeleteLocalData} />;
-  if (page === 'privacy') return <PrivacyAndGuidePage onBack={() => setPage('main')} />;
-  const categoryNames = (kind: TransactionKind): string => categories.filter((category) => category.kind === kind).map((category) => category.name).join('、');
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><View style={styles.pageHeading}><Text style={styles.pageTitle}>我的</Text><Pressable onPress={() => setIsSettingsOpen(true)} style={styles.settingsButton}><Text style={styles.headerActionText}>設定</Text></Pressable></View><View style={styles.profileHeader}>{avatarUri ? <Image source={{ uri: avatarUri }} style={styles.profileAvatarImage} /> : <View style={styles.profileAvatar}><Text style={styles.profileAvatarText}>{initial}</Text></View>}<View><Text style={styles.profileName}>{displayName}</Text><Text style={styles.pageSubtitle}>財務資料已完成設定</Text></View></View><View style={styles.dreamListHeader}><Text style={styles.sectionHeadingText}>夢想列表</Text><View style={styles.disabledDreamListButton}><Text style={styles.disabledDreamListText}>增加夢想清單（暫未開放）</Text></View></View><ScrollView horizontal contentContainerStyle={styles.profileDreamList} showsHorizontalScrollIndicator={false}>{dreams.map((dream) => <View key={dream.id} style={styles.profileDreamCard}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.profileDreamImage} /> : <View style={styles.profileDreamFallback}><Text>✦</Text></View>}<Text numberOfLines={1} style={styles.profileDreamTitle}>{dream.title}</Text><Text style={styles.profileDreamAmount}>{money(dream.target_amount)}</Text></View>)}</ScrollView><Text style={styles.dreamListLimit}>最多可建立 3 個夢想清單，此功能目前暫時關閉。</Text><Text style={styles.activityTitle}>財務設定</Text><ProfileRow icon="◎" title="固定收入" detail={`每月 ${money(monthlyIncome)}・${fixedEntries.filter((entry) => entry.kind === 'income').length} 個項目`} onPress={() => setPage('fixed-income')} /><ProfileRow icon="□" title="固定支出" detail={`每月 ${money(monthlyExpenses)}・${fixedEntries.filter((entry) => entry.kind === 'expense').length} 個項目`} onPress={() => setPage('fixed-expense')} /><ProfileRow icon="＋" title="收入類別" detail={categoryNames('income')} onPress={() => setPage('categories-income')} /><ProfileRow icon="＋" title="支出類別" detail={categoryNames('expense')} onPress={() => setPage('categories-expense')} /><Text style={styles.activityTitle}>系統設定</Text><ProfileRow icon="♧" title="提醒通知" onPress={() => setPage('reminders')} /><ProfileRow icon="▣" title="資料" onPress={() => setPage('data')} /><ProfileRow icon="?" title="隱私與使用說明" onPress={() => setPage('privacy')} /></ScrollView><MainTabs activeTab="profile" setActiveTab={setActiveTab} /><ProfileSettingsModal avatarUri={avatarUri} cloudInvoiceBarcode={cloudInvoiceBarcode} displayName={displayName} isOpen={isSettingsOpen} isSaving={saving} onCancel={() => setIsSettingsOpen(false)} onSave={onUpdateProfile} /></View>;
+  const initial = displayName.trim().slice(0, 1).toUpperCase() || "我";
+  if (page === "fixed-income" || page === "fixed-expense") {
+    const kind: TransactionKind =
+      page === "fixed-income" ? "income" : "expense";
+    return (
+      <FixedEntryListPage
+        categories={categories.filter((item) => item.kind === kind)}
+        color={kind === "income" ? fixedIncomeColor : fixedExpenseColor}
+        entries={fixedEntries.filter((entry) => entry.kind === kind)}
+        isSaving={saving}
+        kind={kind}
+        onBack={() => setPage("main")}
+        onColorChange={onUpdateFixedColor}
+        onDelete={onDeleteFixedEntry}
+        onSave={onSaveFixedEntry}
+      />
+    );
+  }
+  if (page === "categories-income" || page === "categories-expense") {
+    const kind: TransactionKind =
+      page === "categories-income" ? "income" : "expense";
+    return (
+      <CategoryListPage
+        categories={categories.filter((item) => item.kind === kind)}
+        isSaving={saving}
+        kind={kind}
+        onAdd={onAddCategory}
+        onBack={() => setPage("main")}
+        onDelete={onDeleteCategory}
+        onUpdate={onUpdateCategory}
+      />
+    );
+  }
+  if (page === "reminders")
+    return (
+      <ReminderListPage
+        isSaving={saving}
+        onBack={() => setPage("main")}
+        onDelete={onDeleteReminder}
+        onSave={onSaveReminder}
+        reminders={reminders}
+      />
+    );
+  if (page === "language")
+    return (
+      <LanguageSettingsPage
+        isSaving={saving}
+        onBack={() => setPage("main")}
+        onChange={onUpdateLanguage}
+        preference={languagePreference}
+      />
+    );
+  if (page === "data")
+    return (
+      <DataSettingsPage
+        isSaving={saving}
+        onBack={() => setPage("main")}
+        onDelete={onDeleteLocalData}
+      />
+    );
+  if (page === "privacy")
+    return <PrivacyAndGuidePage onBack={() => setPage("main")} />;
+  const categoryNames = (kind: TransactionKind): string =>
+    categories
+      .filter((category) => category.kind === kind)
+      .map((category) => category.name)
+      .join("、");
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <View style={styles.pageHeading}>
+          <Text style={styles.pageTitle}>我的</Text>
+          <Pressable
+            onPress={() => setIsSettingsOpen(true)}
+            style={styles.settingsButton}
+          >
+            <Text style={styles.headerActionText}>設定</Text>
+          </Pressable>
+        </View>
+        <View style={styles.profileHeader}>
+          {avatarUri ? (
+            <Image
+              source={{ uri: avatarUri }}
+              style={styles.profileAvatarImage}
+            />
+          ) : (
+            <View style={styles.profileAvatar}>
+              <Text style={styles.profileAvatarText}>{initial}</Text>
+            </View>
+          )}
+          <View>
+            <Text style={styles.profileName}>{displayName}</Text>
+            <Text style={styles.pageSubtitle}>財務資料已完成設定</Text>
+          </View>
+        </View>
+        <View style={styles.dreamListHeader}>
+          <Text style={styles.sectionHeadingText}>夢想列表</Text>
+          <View style={styles.disabledDreamListButton}>
+            <Text style={styles.disabledDreamListText}>
+              增加夢想清單（暫未開放）
+            </Text>
+          </View>
+        </View>
+        <ScrollView
+          horizontal
+          contentContainerStyle={styles.profileDreamList}
+          showsHorizontalScrollIndicator={false}
+        >
+          {dreams.map((dream) => (
+            <View key={dream.id} style={styles.profileDreamCard}>
+              {dream.image_uri ? (
+                <Image
+                  source={{ uri: dream.image_uri }}
+                  style={styles.profileDreamImage}
+                />
+              ) : (
+                <View style={styles.profileDreamFallback}>
+                  <Text>✦</Text>
+                </View>
+              )}
+              <Text numberOfLines={1} style={styles.profileDreamTitle}>
+                {dream.title}
+              </Text>
+              <Text style={styles.profileDreamAmount}>
+                {money(dream.target_amount)}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+        <Text style={styles.dreamListLimit}>
+          最多可建立 3 個夢想清單，此功能目前暫時關閉。
+        </Text>
+        <Text style={styles.activityTitle}>財務設定</Text>
+        <ProfileRow
+          icon="◎"
+          title="固定收入"
+          detail={`每月 ${money(monthlyIncome)}・${fixedEntries.filter((entry) => entry.kind === "income").length} 個項目`}
+          onPress={() => setPage("fixed-income")}
+        />
+        <ProfileRow
+          icon="□"
+          title="固定支出"
+          detail={`每月 ${money(monthlyExpenses)}・${fixedEntries.filter((entry) => entry.kind === "expense").length} 個項目`}
+          onPress={() => setPage("fixed-expense")}
+        />
+        <ProfileRow
+          icon="＋"
+          title="收入類別"
+          detail={categoryNames("income")}
+          onPress={() => setPage("categories-income")}
+        />
+        <ProfileRow
+          icon="＋"
+          title="支出類別"
+          detail={categoryNames("expense")}
+          onPress={() => setPage("categories-expense")}
+        />
+        <Text style={styles.activityTitle}>系統設定</Text>
+        <ProfileRow
+          icon="♧"
+          title="提醒通知"
+          onPress={() => setPage("reminders")}
+        />
+        <ProfileRow
+          icon="文"
+          title="語言"
+          detail={languagePreference === "system" ? "跟隨系統" : languagePreference === "zh-Hant" ? "繁體中文" : "English"}
+          onPress={() => setPage("language")}
+        />
+        <ProfileRow icon="▣" title="資料" onPress={() => setPage("data")} />
+        <ProfileRow
+          icon="?"
+          title="隱私與使用說明"
+          onPress={() => setPage("privacy")}
+        />
+      </ScrollView>
+      <MainTabs activeTab="profile" setActiveTab={setActiveTab} />
+      <ProfileSettingsModal
+        avatarUri={avatarUri}
+        cloudInvoiceBarcode={cloudInvoiceBarcode}
+        displayName={displayName}
+        isOpen={isSettingsOpen}
+        isSaving={saving}
+        onCancel={() => setIsSettingsOpen(false)}
+        onSave={onUpdateProfile}
+      />
+    </View>
+  );
 }
-function ProfileRow({ color, icon, title, detail, onPress }: { color?: string; icon: string; title: string; detail?: string; onPress?: () => void }) { return <Pressable disabled={!onPress} onPress={onPress} style={({ pressed }) => [styles.profileRow, pressed && styles.financeRowPressed]}><View style={styles.profileRowIcon}><Text style={styles.profileRowIconText}>{icon}</Text></View><View style={styles.profileRowCopy}><Text style={styles.profileRowTitle}>{title}</Text>{detail ? <Text numberOfLines={1} style={styles.profileRowDetail}>{detail}</Text> : null}</View>{color && <View style={[styles.profileColorSwatch, { backgroundColor: color }]} />}<Text style={styles.profileChevron}>›</Text></Pressable>; }
-const fixedEntryPalette = ['#FFE8A3', '#F8C8DC', '#A8DDB5', '#AFCBFF', '#D8C4F1', '#FFD0A8'];
-function ProfileSettingsModal({ avatarUri, cloudInvoiceBarcode, displayName, isOpen, isSaving, onCancel, onSave }: { avatarUri: string | null; cloudInvoiceBarcode: string; displayName: string; isOpen: boolean; isSaving: boolean; onCancel: () => void; onSave: (name: string, avatar: string | null, cloudInvoiceBarcode: string) => Promise<boolean> }) {
+function ProfileRow({
+  color,
+  icon,
+  title,
+  detail,
+  onPress,
+}: {
+  color?: string;
+  icon: string;
+  title: string;
+  detail?: string;
+  onPress?: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={!onPress}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.profileRow,
+        pressed && styles.financeRowPressed,
+      ]}
+    >
+      <View style={styles.profileRowIcon}>
+        <Text style={styles.profileRowIconText}>{icon}</Text>
+      </View>
+      <View style={styles.profileRowCopy}>
+        <Text style={styles.profileRowTitle}>{title}</Text>
+        {detail ? (
+          <Text numberOfLines={1} style={styles.profileRowDetail}>
+            {detail}
+          </Text>
+        ) : null}
+      </View>
+      {color && (
+        <View style={[styles.profileColorSwatch, { backgroundColor: color }]} />
+      )}
+      <Text style={styles.profileChevron}>›</Text>
+    </Pressable>
+  );
+}
+const fixedEntryPalette = [
+  "#FFE8A3",
+  "#F8C8DC",
+  "#A8DDB5",
+  "#AFCBFF",
+  "#D8C4F1",
+  "#FFD0A8",
+];
+function ProfileSettingsModal({
+  avatarUri,
+  cloudInvoiceBarcode,
+  displayName,
+  isOpen,
+  isSaving,
+  onCancel,
+  onSave,
+}: {
+  avatarUri: string | null;
+  cloudInvoiceBarcode: string;
+  displayName: string;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onSave: (
+    name: string,
+    avatar: string | null,
+    cloudInvoiceBarcode: string,
+  ) => Promise<boolean>;
+}) {
   const [name, setName] = useState(displayName);
   const [avatar, setAvatar] = useState<string | null>(avatarUri);
   const [barcode, setBarcode] = useState(cloudInvoiceBarcode);
-  const [barcodeTestStatus, setBarcodeTestStatus] = useState<CloudInvoiceTestStatus>('idle');
-  useEffect(() => { if (isOpen) { setName(displayName); setAvatar(avatarUri); setBarcode(cloudInvoiceBarcode); setBarcodeTestStatus('idle'); } }, [avatarUri, cloudInvoiceBarcode, displayName, isOpen]);
-  const pickAvatar = (): void => { void (async (): Promise<void> => { const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, aspect: [1, 1], base64: true, mediaTypes: ['images'], quality: 0.55 }); if (!result.canceled) { const picked = result.assets[0]; setAvatar(picked.base64 ? `data:image/jpeg;base64,${picked.base64}` : picked.uri); } })(); };
-  const updateBarcode = (value: string): void => { setBarcode(value.toUpperCase()); setBarcodeTestStatus('idle'); };
+  const [barcodeTestStatus, setBarcodeTestStatus] =
+    useState<CloudInvoiceTestStatus>("idle");
+  useEffect(() => {
+    if (isOpen) {
+      setName(displayName);
+      setAvatar(avatarUri);
+      setBarcode(cloudInvoiceBarcode);
+      setBarcodeTestStatus("idle");
+    }
+  }, [avatarUri, cloudInvoiceBarcode, displayName, isOpen]);
+  const pickAvatar = (): void => {
+    void (async (): Promise<void> => {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        base64: true,
+        mediaTypes: ["images"],
+        quality: 0.55,
+      });
+      if (!result.canceled) {
+        const picked = result.assets[0];
+        setAvatar(
+          picked.base64
+            ? `data:image/jpeg;base64,${picked.base64}`
+            : picked.uri,
+        );
+      }
+    })();
+  };
+  const updateBarcode = (value: string): void => {
+    setBarcode(value.toUpperCase());
+    setBarcodeTestStatus("idle");
+  };
   const testBarcode = (): void => {
     const normalized = barcode.trim().toUpperCase();
-    if (normalized === '') { setBarcodeTestStatus('invalid'); Alert.alert('尚未輸入雲端發票代碼', '請先輸入你的手機條碼。'); return; }
-    if (!normalized.startsWith('/')) { setBarcodeTestStatus('invalid'); Alert.alert('代碼格式不正確', '雲端發票手機條碼的第一碼必須是 /。'); return; }
-    if (!CLOUD_INVOICE_BARCODE_PATTERN.test(normalized)) { setBarcodeTestStatus('invalid'); Alert.alert('代碼格式不正確', '手機條碼必須為 / 加上 7 個英文、數字或 . + - 符號。'); return; }
+    if (normalized === "") {
+      setBarcodeTestStatus("invalid");
+      Alert.alert("尚未輸入雲端發票代碼", "請先輸入你的手機條碼。");
+      return;
+    }
+    if (!normalized.startsWith("/")) {
+      setBarcodeTestStatus("invalid");
+      Alert.alert("代碼格式不正確", "雲端發票手機條碼的第一碼必須是 /。");
+      return;
+    }
+    if (!CLOUD_INVOICE_BARCODE_PATTERN.test(normalized)) {
+      setBarcodeTestStatus("invalid");
+      Alert.alert(
+        "代碼格式不正確",
+        "手機條碼必須為 / 加上 7 個英文、數字或 . + - 符號。",
+      );
+      return;
+    }
     setBarcode(normalized);
-    setBarcodeTestStatus('valid');
+    setBarcodeTestStatus("valid");
   };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>使用者設定</Text><Pressable onPress={pickAvatar} style={styles.avatarPicker}>{avatar ? <Image source={{ uri: avatar }} style={styles.avatarPickerImage} /> : <Text style={styles.avatarPickerIcon}>＋</Text>}<Text style={styles.avatarPickerText}>選擇大頭照</Text></Pressable><Text style={styles.fieldLabel}>使用者名稱</Text><TextInput style={styles.modalInput} value={name} onChangeText={setName} /><View style={styles.cloudInvoiceSection}><Text style={styles.cloudInvoiceTitle}>雲端發票（台灣限定使用）</Text><Text style={styles.cloudInvoiceDescription}>輸入財政部雲端發票手機條碼。</Text><TextInput autoCapitalize="characters" autoCorrect={false} maxLength={8} placeholder="輸入你的雲端發票代碼" placeholderTextColor="#9AA5B4" style={[styles.modalInput, barcodeTestStatus === 'invalid' && styles.cloudInvoiceInputInvalid]} value={barcode} onChangeText={updateBarcode} /><Pressable accessibilityRole="button" onPress={testBarcode} style={styles.cloudInvoiceTestButton}><Text style={styles.cloudInvoiceTestButtonText}>測試代碼</Text></Pressable>{barcodeTestStatus === 'valid' && <View style={styles.cloudInvoiceStatus}><Text style={styles.cloudInvoiceStatusTitle}>✓ 代碼格式正確</Text><Text style={styles.cloudInvoiceStatusText}>本版本先完成格式測試；是否已申請將在後續串接財政部 API 後確認。</Text></View>}</View><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={() => { void (async (): Promise<void> => { if (await onSave(name, avatar, barcode)) onCancel(); })(); }}><Text style={styles.buttonText}>儲存設定</Text></Pressable><Pressable style={styles.modalCancelButton} onPress={onCancel}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.modalTitle}>使用者設定</Text>
+              <Pressable onPress={pickAvatar} style={styles.avatarPicker}>
+                {avatar ? (
+                  <Image
+                    source={{ uri: avatar }}
+                    style={styles.avatarPickerImage}
+                  />
+                ) : (
+                  <Text style={styles.avatarPickerIcon}>＋</Text>
+                )}
+                <Text style={styles.avatarPickerText}>選擇大頭照</Text>
+              </Pressable>
+              <Text style={styles.fieldLabel}>使用者名稱</Text>
+              <TextInput
+                style={styles.modalInput}
+                value={name}
+                onChangeText={setName}
+              />
+              <View style={styles.cloudInvoiceSection}>
+                <Text style={styles.cloudInvoiceTitle}>
+                  雲端發票（台灣限定使用）
+                </Text>
+                <Text style={styles.cloudInvoiceDescription}>
+                  輸入財政部雲端發票手機條碼。
+                </Text>
+                <TextInput
+                  editable={false}
+                  placeholder="製作中...，敬請期待"
+                  placeholderTextColor="#9AA5B4"
+                  style={[styles.modalInput, styles.cloudInvoiceInputDisabled]}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  disabled
+                  style={[styles.cloudInvoiceTestButton, styles.disabled]}
+                >
+                  <Text style={styles.cloudInvoiceTestButtonText}>
+                    測試代碼
+                  </Text>
+                </Pressable>
+                {barcodeTestStatus === "valid" && (
+                  <View style={styles.cloudInvoiceStatus}>
+                    <Text style={styles.cloudInvoiceStatusTitle}>
+                      ✓ 代碼格式正確
+                    </Text>
+                    <Text style={styles.cloudInvoiceStatusText}>
+                      本版本先完成格式測試；是否已申請將在後續串接財政部 API
+                      後確認。
+                    </Text>
+                  </View>
+                )}
+              </View>
+              <Pressable
+                disabled={isSaving}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+                onPress={() => {
+                  void (async (): Promise<void> => {
+                    if (await onSave(name, avatar, barcode)) onCancel();
+                  })();
+                }}
+              >
+                <Text style={styles.buttonText}>儲存設定</Text>
+              </Pressable>
+              <Pressable style={styles.modalCancelButton} onPress={onCancel}>
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
-function ReminderListPage({ isSaving, onBack, onDelete, onSave, reminders }: { isSaving: boolean; onBack: () => void; onDelete: (id: number) => Promise<boolean>; onSave: (input: ReminderInput) => Promise<boolean>; reminders: ReadonlyArray<Reminder> }) {
+function ReminderListPage({
+  isSaving,
+  onBack,
+  onDelete,
+  onSave,
+  reminders,
+}: {
+  isSaving: boolean;
+  onBack: () => void;
+  onDelete: (id: number) => Promise<boolean>;
+  onSave: (input: ReminderInput) => Promise<boolean>;
+  reminders: ReadonlyArray<Reminder>;
+}) {
   const [editing, setEditing] = useState<Reminder | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const requestDelete = (reminder: Reminder): void => Alert.alert(`刪除「${reminder.title}」？`, '刪除後，手機上的每月通知也會一併取消。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => { void onDelete(reminder.id); } }]);
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><SubpageHeader onBack={onBack} title="提醒通知" /><Text style={styles.pageSubtitle}>建立每月固定發送的裝置提醒。</Text>{reminders.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>尚未設定提醒</Text><Text style={styles.emptyDreamsText}>新增提醒後，App 會依照你設定的日期與時間定期通知。</Text></View> : reminders.map((reminder) => <Pressable key={reminder.id} onPress={() => { setEditing(reminder); setIsFormOpen(true); }} style={styles.reminderCard}><View style={styles.reminderCardHeader}><View style={styles.reminderItemBadge}><Text style={styles.reminderItemText}>{reminder.item}</Text></View><Text style={styles.reminderTime}>每月 {reminder.day_of_month} 日　{String(reminder.hour).padStart(2, '0')}:{String(reminder.minute).padStart(2, '0')}</Text></View><Text style={styles.reminderTitle}>{reminder.title}</Text><Text numberOfLines={2} style={styles.reminderBody}>{reminder.body}</Text><Pressable hitSlop={8} onPress={() => requestDelete(reminder)} style={styles.reminderDeleteButton}><Text style={styles.inlineDeleteText}>刪除</Text></Pressable></Pressable>)}<Pressable onPress={() => { setEditing(null); setIsFormOpen(true); }} style={styles.financeAddButton}><Text style={styles.financeAddButtonText}>＋ 新增通知</Text></Pressable></ScrollView><ReminderForm initialReminder={editing} isOpen={isFormOpen} isSaving={isSaving} onCancel={() => { setIsFormOpen(false); setEditing(null); }} onSave={onSave} /></View>;
+  const requestDelete = (reminder: Reminder): void =>
+    Alert.alert(
+      `刪除「${reminder.title}」？`,
+      "刪除後，手機上的每月通知也會一併取消。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "刪除",
+          style: "destructive",
+          onPress: () => {
+            void onDelete(reminder.id);
+          },
+        },
+      ],
+    );
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <SubpageHeader onBack={onBack} title="提醒通知" />
+        <Text style={styles.pageSubtitle}>建立每月固定發送的裝置提醒。</Text>
+        {reminders.length === 0 ? (
+          <View style={styles.emptyDreams}>
+            <Text style={styles.emptyDreamsTitle}>尚未設定提醒</Text>
+            <Text style={styles.emptyDreamsText}>
+              新增提醒後，App 會依照你設定的日期與時間定期通知。
+            </Text>
+          </View>
+        ) : (
+          reminders.map((reminder) => (
+            <Pressable
+              key={reminder.id}
+              onPress={() => {
+                setEditing(reminder);
+                setIsFormOpen(true);
+              }}
+              style={styles.reminderCard}
+            >
+              <View style={styles.reminderCardHeader}>
+                <View style={styles.reminderItemBadge}>
+                  <Text style={styles.reminderItemText}>{reminder.item}</Text>
+                </View>
+                <Text style={styles.reminderTime}>
+                  每月 {reminder.day_of_month} 日　
+                  {String(reminder.hour).padStart(2, "0")}:
+                  {String(reminder.minute).padStart(2, "0")}
+                </Text>
+              </View>
+              <Text style={styles.reminderTitle}>{reminder.title}</Text>
+              <Text numberOfLines={2} style={styles.reminderBody}>
+                {reminder.body}
+              </Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => requestDelete(reminder)}
+                style={styles.reminderDeleteButton}
+              >
+                <Text style={styles.inlineDeleteText}>刪除</Text>
+              </Pressable>
+            </Pressable>
+          ))
+        )}
+        <Pressable
+          onPress={() => {
+            setEditing(null);
+            setIsFormOpen(true);
+          }}
+          style={styles.financeAddButton}
+        >
+          <Text style={styles.financeAddButtonText}>＋ 新增通知</Text>
+        </Pressable>
+      </ScrollView>
+      <ReminderForm
+        initialReminder={editing}
+        isOpen={isFormOpen}
+        isSaving={isSaving}
+        onCancel={() => {
+          setIsFormOpen(false);
+          setEditing(null);
+        }}
+        onSave={onSave}
+      />
+    </View>
+  );
 }
-function ReminderForm({ initialReminder, isOpen, isSaving, onCancel, onSave }: { initialReminder: Reminder | null; isOpen: boolean; isSaving: boolean; onCancel: () => void; onSave: (input: ReminderInput) => Promise<boolean> }) {
-  const reminderItems = ['夢想進度', '每月財務回顧', '固定收入', '固定支出', '自訂提醒'];
+function ReminderForm({
+  initialReminder,
+  isOpen,
+  isSaving,
+  onCancel,
+  onSave,
+}: {
+  initialReminder: Reminder | null;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onSave: (input: ReminderInput) => Promise<boolean>;
+}) {
+  const reminderItems = [
+    "夢想進度",
+    "每月財務回顧",
+    "固定收入",
+    "固定支出",
+    "自訂提醒",
+  ];
   const [item, setItem] = useState(initialReminder?.item ?? reminderItems[0]);
-  const [title, setTitle] = useState(initialReminder?.title ?? '記得查看本月進度');
-  const [body, setBody] = useState(initialReminder?.body ?? '打開 App 看看你的夢想與財務進度吧！');
+  const [title, setTitle] = useState(
+    initialReminder?.title ?? "記得查看本月進度",
+  );
+  const [body, setBody] = useState(
+    initialReminder?.body ?? "打開 App 看看你的夢想與財務進度吧！",
+  );
   const [day, setDay] = useState(initialReminder?.day_of_month ?? 1);
   const [hour, setHour] = useState(initialReminder?.hour ?? 9);
   const [minute, setMinute] = useState(initialReminder?.minute ?? 0);
-  useEffect(() => { if (isOpen) { setItem(initialReminder?.item ?? reminderItems[0]); setTitle(initialReminder?.title ?? '記得查看本月進度'); setBody(initialReminder?.body ?? '打開 App 看看你的夢想與財務進度吧！'); setDay(initialReminder?.day_of_month ?? 1); setHour(initialReminder?.hour ?? 9); setMinute(initialReminder?.minute ?? 0); } }, [initialReminder, isOpen]);
-  const submit = (): void => { if (title.trim() === '' || body.trim() === '') { Alert.alert('請完成提醒資料', '標題與提醒內容不可空白。'); return; } void (async (): Promise<void> => { if (await onSave({ id: initialReminder?.id, item, title, body, dayOfMonth: day, hour, minute })) onCancel(); })(); };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>{initialReminder ? '修改提醒' : '新增提醒'}</Text><Text style={styles.fieldLabel}>提醒項目</Text><View style={styles.categoryPickerBox}><Picker selectedValue={item} onValueChange={(value: string) => setItem(value)}>{reminderItems.map((value) => <Picker.Item key={value} label={value} value={value} />)}</Picker></View><Text style={styles.fieldLabel}>標題</Text><TextInput placeholder="例如：本月夢想進度" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={title} onChangeText={setTitle} /><Text style={styles.fieldLabel}>提醒內容</Text><TextInput multiline placeholder="輸入通知顯示的內容" placeholderTextColor="#9AA5B4" style={[styles.modalInput, styles.noteInput]} value={body} onChangeText={setBody} /><Text style={styles.fieldLabel}>設定每月通知時間</Text><View style={styles.reminderPickerRow}><View style={styles.reminderPickerBox}><Picker selectedValue={day} onValueChange={(value: number) => setDay(value)}>{Array.from({ length: 28 }, (_, index) => <Picker.Item key={index + 1} label={`${index + 1} 日`} value={index + 1} />)}</Picker></View><View style={styles.reminderPickerBox}><Picker selectedValue={hour} onValueChange={(value: number) => setHour(value)}>{Array.from({ length: 24 }, (_, index) => <Picker.Item key={index} label={`${String(index).padStart(2, '0')} 時`} value={index} />)}</Picker></View><View style={styles.reminderPickerBox}><Picker selectedValue={minute} onValueChange={(value: number) => setMinute(value)}>{[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((value) => <Picker.Item key={value} label={`${String(value).padStart(2, '0')} 分`} value={value} />)}</Picker></View></View><Pressable disabled={isSaving} onPress={submit} style={[styles.modalPrimaryButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable onPress={onCancel} style={styles.modalCancelButton}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  useEffect(() => {
+    if (isOpen) {
+      setItem(initialReminder?.item ?? reminderItems[0]);
+      setTitle(initialReminder?.title ?? "記得查看本月進度");
+      setBody(initialReminder?.body ?? "打開 App 看看你的夢想與財務進度吧！");
+      setDay(initialReminder?.day_of_month ?? 1);
+      setHour(initialReminder?.hour ?? 9);
+      setMinute(initialReminder?.minute ?? 0);
+    }
+  }, [initialReminder, isOpen]);
+  const submit = (): void => {
+    if (title.trim() === "" || body.trim() === "") {
+      Alert.alert("請完成提醒資料", "標題與提醒內容不可空白。");
+      return;
+    }
+    void (async (): Promise<void> => {
+      if (
+        await onSave({
+          id: initialReminder?.id,
+          item,
+          title,
+          body,
+          dayOfMonth: day,
+          hour,
+          minute,
+        })
+      )
+        onCancel();
+    })();
+  };
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.modalTitle}>
+                {initialReminder ? "修改提醒" : "新增提醒"}
+              </Text>
+              <Text style={styles.fieldLabel}>提醒項目</Text>
+              <View style={styles.categoryPickerBox}>
+                <Picker
+                  selectedValue={item}
+                  onValueChange={(value: string) => setItem(value)}
+                >
+                  {reminderItems.map((value) => (
+                    <Picker.Item key={value} label={value} value={value} />
+                  ))}
+                </Picker>
+              </View>
+              <Text style={styles.fieldLabel}>標題</Text>
+              <TextInput
+                placeholder="例如：本月夢想進度"
+                placeholderTextColor="#9AA5B4"
+                style={styles.modalInput}
+                value={title}
+                onChangeText={setTitle}
+              />
+              <Text style={styles.fieldLabel}>提醒內容</Text>
+              <TextInput
+                multiline
+                placeholder="輸入通知顯示的內容"
+                placeholderTextColor="#9AA5B4"
+                style={[styles.modalInput, styles.noteInput]}
+                value={body}
+                onChangeText={setBody}
+              />
+              <Text style={styles.fieldLabel}>設定每月通知時間</Text>
+              <View style={styles.reminderPickerRow}>
+                <View style={styles.reminderPickerBox}>
+                  <Picker
+                    selectedValue={day}
+                    onValueChange={(value: number) => setDay(value)}
+                  >
+                    {Array.from({ length: 28 }, (_, index) => (
+                      <Picker.Item
+                        key={index + 1}
+                        label={`${index + 1} 日`}
+                        value={index + 1}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+                <View style={styles.reminderPickerBox}>
+                  <Picker
+                    selectedValue={hour}
+                    onValueChange={(value: number) => setHour(value)}
+                  >
+                    {Array.from({ length: 24 }, (_, index) => (
+                      <Picker.Item
+                        key={index}
+                        label={`${String(index).padStart(2, "0")} 時`}
+                        value={index}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+                <View style={styles.reminderPickerBox}>
+                  <Picker
+                    selectedValue={minute}
+                    onValueChange={(value: number) => setMinute(value)}
+                  >
+                    {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map(
+                      (value) => (
+                        <Picker.Item
+                          key={value}
+                          label={`${String(value).padStart(2, "0")} 分`}
+                          value={value}
+                        />
+                      ),
+                    )}
+                  </Picker>
+                </View>
+              </View>
+              <Pressable
+                disabled={isSaving}
+                onPress={submit}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>完成</Text>
+                )}
+              </Pressable>
+              <Pressable onPress={onCancel} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
-function DataSettingsPage({ isSaving, onBack, onDelete }: { isSaving: boolean; onBack: () => void; onDelete: () => Promise<boolean> }) {
+function LanguageSettingsPage({
+  isSaving,
+  onBack,
+  onChange,
+  preference,
+}: {
+  isSaving: boolean;
+  onBack: () => void;
+  onChange: (preference: LanguagePreference) => Promise<boolean>;
+  preference: LanguagePreference;
+}) {
+  const options: ReadonlyArray<{ description: string; label: string; value: LanguagePreference }> = [
+    { description: "依手機語言與地區自動選擇", label: "跟隨系統", value: "system" },
+    { description: "固定使用繁體中文", label: "繁體中文", value: "zh-Hant" },
+    { description: "Always display the app in English", label: "English", value: "en" },
+  ];
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <SubpageHeader onBack={onBack} title="語言" />
+        <Text style={styles.pageSubtitle}>選擇 App 的顯示語言。</Text>
+        <View style={styles.languageOptions}>
+          {options.map((option) => {
+            const selected = preference === option.value;
+            return (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected, disabled: isSaving }}
+                disabled={isSaving}
+                key={option.value}
+                onPress={() => { void onChange(option.value); }}
+                style={[styles.languageOption, selected && styles.languageOptionSelected]}
+              >
+                <View style={styles.languageOptionCopy}>
+                  <Text style={styles.languageOptionTitle}>{option.label}</Text>
+                  <Text style={styles.languageOptionDescription}>{option.description}</Text>
+                </View>
+                <View style={[styles.languageRadio, selected && styles.languageRadioSelected]}>
+                  {selected && <View style={styles.languageRadioDot} />}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+function DataSettingsPage({
+  isSaving,
+  onBack,
+  onDelete,
+}: {
+  isSaving: boolean;
+  onBack: () => void;
+  onDelete: () => Promise<boolean>;
+}) {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><SubpageHeader onBack={onBack} title="資料" /><Pressable disabled={isSaving} onPress={() => setIsConfirmOpen(true)} style={styles.localDataDeleteButton}><Text style={styles.localDataDeleteTitle}>刪除本機資料</Text></Pressable></ScrollView><Modal animationType="fade" transparent visible={isConfirmOpen} onRequestClose={() => { setIsConfirmOpen(false); onBack(); }}><View style={styles.confirmOverlay}><View style={styles.confirmCard}><View style={styles.confirmIcon}><Text style={styles.confirmIconText}>!</Text></View><Text style={styles.confirmTitle}>確認是否刪除？</Text><Text style={styles.confirmMessage}>所有夢想、財務、日曆、個人資料與通知設定都會從這台裝置永久刪除，且無法復原。</Text><Pressable disabled={isSaving} onPress={() => { void onDelete(); }} style={[styles.confirmDeleteButton, isSaving && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>確認刪除</Text>}</Pressable><Pressable disabled={isSaving} onPress={() => { setIsConfirmOpen(false); onBack(); }} style={styles.confirmCancelButton}><Text style={styles.confirmCancelText}>取消</Text></Pressable></View></View></Modal></View>;
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <SubpageHeader onBack={onBack} title="資料" />
+        <Pressable
+          disabled={isSaving}
+          onPress={() => setIsConfirmOpen(true)}
+          style={styles.localDataDeleteButton}
+        >
+          <Text style={styles.localDataDeleteTitle}>刪除本機資料</Text>
+        </Pressable>
+      </ScrollView>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isConfirmOpen}
+        onRequestClose={() => {
+          setIsConfirmOpen(false);
+          onBack();
+        }}
+      >
+        <View style={styles.confirmOverlay}>
+          <View style={styles.confirmCard}>
+            <View style={styles.confirmIcon}>
+              <Text style={styles.confirmIconText}>!</Text>
+            </View>
+            <Text style={styles.confirmTitle}>確認是否刪除？</Text>
+            <Text style={styles.confirmMessage}>
+              所有夢想、財務、日曆、個人資料與通知設定都會從這台裝置永久刪除，且無法復原。
+            </Text>
+            <Pressable
+              disabled={isSaving}
+              onPress={() => {
+                void onDelete();
+              }}
+              style={[styles.confirmDeleteButton, isSaving && styles.disabled]}
+            >
+              {isSaving ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.buttonText}>確認刪除</Text>
+              )}
+            </Pressable>
+            <Pressable
+              disabled={isSaving}
+              onPress={() => {
+                setIsConfirmOpen(false);
+                onBack();
+              }}
+              style={styles.confirmCancelButton}
+            >
+              <Text style={styles.confirmCancelText}>取消</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
 }
 function PrivacyAndGuidePage({ onBack }: { onBack: () => void }) {
-  return <View style={styles.container}><StatusBar style="dark" /><View style={styles.privacyHeader}><SubpageHeader onBack={onBack} title="隱私與使用說明" /></View><ScrollView contentContainerStyle={styles.privacyContent} showsVerticalScrollIndicator={false} style={styles.privacyScroll}><Text style={styles.privacyUpdated}>最後更新：2026 年 10 月 19 日・版本 1.1</Text><InfoSection title="隱私權說明"><InfoParagraph title="資料保存">目前的使用者名稱、大頭照、夢想、資產負債、收支、類別、提醒設定與雲端發票手機條碼，只儲存在本裝置的 App 資料庫中，不會主動上傳到開發者伺服器或提供給第三方。</InfoParagraph><InfoParagraph title="雲端發票手機條碼">此欄位為選填且僅限台灣使用。目前版本只在本裝置保存條碼並檢查格式，不會將條碼傳送至財政部、開發者或第三方，也不會確認條碼是否已申請。</InfoParagraph><InfoParagraph title="照片權限">只有在你主動選擇大頭照或夢想圖片時，App 才會開啟 iOS 或 Android 的系統照片選擇器。App 只保存你選取的圖片，不會讀取整個相簿。</InfoParagraph><InfoParagraph title="通知權限">只有在你新增提醒並同意系統權限後，App 才會建立本機通知。提醒由裝置系統依設定時間發送，不會用於廣告追蹤。</InfoParagraph><InfoParagraph title="資料刪除">你可以從「我的 → 系統設定 → 資料」刪除全部本機資料。刪除後也會取消 App 已建立的通知排程。</InfoParagraph><InfoParagraph title="第三方與追蹤">目前版本不使用第三方廣告、不販售個人資料，也不進行跨 App 或跨網站追蹤。若未來加入雲端同步、分析、發票 API 或其他第三方服務，隱私權內容會在啟用前更新。</InfoParagraph><InfoParagraph title="平台權限管理">你可以隨時前往 iOS「設定」或 Android「設定」調整照片與通知權限。停用權限可能使相關功能無法使用，但不影響其他本機功能。</InfoParagraph><InfoParagraph title="聯絡方式">開發者／資料處理負責人：Kuo Lung Huang{`\n`}聯絡信箱：bezierline2026@gmail.com</InfoParagraph></InfoSection><InfoSection title="App 操作說明"><InfoParagraph title="夢想">新增夢想名稱、圖片、目標金額、每月投入金額與預計日期，並查看達成進度。</InfoParagraph><InfoParagraph title="財務">管理個人權益與負債，查看資產負債結構。</InfoParagraph><InfoParagraph title="日曆">選擇日期查看或新增收入與支出，並顯示固定收入、固定支出的日期標記與每月總和。</InfoParagraph><InfoParagraph title="我的">設定個人資料、雲端發票手機條碼、固定收支、收支類別與每月提醒通知，也可以查看本說明或刪除本機資料。</InfoParagraph><InfoParagraph title="重要提醒">App 提供的是個人整理與規劃工具，不構成投資、會計、稅務或法律建議。重要財務決策請諮詢合格專業人士。</InfoParagraph></InfoSection></ScrollView></View>;
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <View style={styles.privacyHeader}>
+        <SubpageHeader onBack={onBack} title="隱私與使用說明" />
+      </View>
+      <ScrollView
+        contentContainerStyle={styles.privacyContent}
+        showsVerticalScrollIndicator={false}
+        style={styles.privacyScroll}
+      >
+        <Text style={styles.privacyUpdated}>
+          最後更新：2026 年 10 月 19 日・版本 1.1
+        </Text>
+        <InfoSection title="隱私權說明">
+          <InfoParagraph title="資料保存">
+            目前的使用者名稱、大頭照、夢想、資產負債、收支、類別、提醒設定與雲端發票手機條碼，只儲存在本裝置的
+            App 資料庫中，不會主動上傳到開發者伺服器或提供給第三方。
+          </InfoParagraph>
+          <InfoParagraph title="雲端發票手機條碼">
+            此欄位為選填且僅限台灣使用。目前版本只在本裝置保存條碼並檢查格式，不會將條碼傳送至財政部、開發者或第三方，也不會確認條碼是否已申請。
+          </InfoParagraph>
+          <InfoParagraph title="照片權限">
+            只有在你主動選擇大頭照或夢想圖片時，App 才會開啟 iOS 或 Android
+            的系統照片選擇器。App 只保存你選取的圖片，不會讀取整個相簿。
+          </InfoParagraph>
+          <InfoParagraph title="通知權限">
+            只有在你新增提醒並同意系統權限後，App
+            才會建立本機通知。提醒由裝置系統依設定時間發送，不會用於廣告追蹤。
+          </InfoParagraph>
+          <InfoParagraph title="資料刪除">
+            你可以從「我的 → 系統設定 → 資料」刪除全部本機資料。刪除後也會取消
+            App 已建立的通知排程。
+          </InfoParagraph>
+          <InfoParagraph title="第三方與追蹤">
+            目前版本不使用第三方廣告、不販售個人資料，也不進行跨 App
+            或跨網站追蹤。若未來加入雲端同步、分析、發票 API
+            或其他第三方服務，隱私權內容會在啟用前更新。
+          </InfoParagraph>
+          <InfoParagraph title="平台權限管理">
+            你可以隨時前往 iOS「設定」或
+            Android「設定」調整照片與通知權限。停用權限可能使相關功能無法使用，但不影響其他本機功能。
+          </InfoParagraph>
+          <InfoParagraph title="聯絡方式">
+            開發者／資料處理負責人：Kuo Lung Huang{`\n`}
+            聯絡信箱：bezierline2026@gmail.com
+          </InfoParagraph>
+        </InfoSection>
+        <InfoSection title="App 操作說明">
+          <InfoParagraph title="夢想">
+            新增夢想名稱、圖片、目標金額、每月投入金額與預計日期，並查看達成進度。
+          </InfoParagraph>
+          <InfoParagraph title="財務">
+            管理個人權益與負債，查看資產負債結構。
+          </InfoParagraph>
+          <InfoParagraph title="日曆">
+            選擇日期查看或新增收入與支出，並顯示固定收入、固定支出的日期標記與每月總和。
+          </InfoParagraph>
+          <InfoParagraph title="我的">
+            設定個人資料、雲端發票手機條碼、固定收支、收支類別與每月提醒通知，也可以查看本說明或刪除本機資料。
+          </InfoParagraph>
+          <InfoParagraph title="重要提醒">
+            App
+            提供的是個人整理與規劃工具，不構成投資、會計、稅務或法律建議。重要財務決策請諮詢合格專業人士。
+          </InfoParagraph>
+        </InfoSection>
+      </ScrollView>
+    </View>
+  );
 }
-function InfoSection({ children, title }: { children: ReactNode; title: string }) {
-  const isPrivacySection = title === '隱私權說明';
+function InfoSection({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  const isPrivacySection = title === "隱私權說明";
   const openPrivacyPolicy = async (): Promise<void> => {
     try {
       await Linking.openURL(PRIVACY_POLICY_URL);
     } catch {
-      Alert.alert('無法開啟網頁', '請檢查網路連線後再試一次。');
+      Alert.alert("無法開啟網頁", "請檢查網路連線後再試一次。");
     }
   };
-  return <View style={styles.infoSection}><Text style={styles.infoSectionTitle}>{title}</Text>{isPrivacySection && <Pressable accessibilityRole="link" onPress={() => { void openPrivacyPolicy(); }} style={styles.privacyPolicyLink}><Text style={styles.privacyPolicyLinkTitle}>查看完整隱私權政策 ↗</Text></Pressable>}{children}</View>;
+  return (
+    <View style={styles.infoSection}>
+      <Text style={styles.infoSectionTitle}>{title}</Text>
+      {isPrivacySection && (
+        <Pressable
+          accessibilityRole="link"
+          onPress={() => {
+            void openPrivacyPolicy();
+          }}
+          style={styles.privacyPolicyLink}
+        >
+          <Text style={styles.privacyPolicyLinkTitle}>
+            查看完整隱私權政策 ↗
+          </Text>
+        </Pressable>
+      )}
+      {children}
+    </View>
+  );
 }
-function InfoParagraph({ children, title }: { children: ReactNode; title: string }) { return <View style={styles.infoParagraph}><Text style={styles.infoParagraphTitle}>{title}</Text><Text style={styles.infoParagraphBody}>{children}</Text></View>; }
-function FixedEntryListPage({ categories, color, entries, isSaving, kind, onBack, onColorChange, onDelete, onSave }: { categories: ReadonlyArray<TransactionCategory>; color: string; entries: ReadonlyArray<FinancialEntry>; isSaving: boolean; kind: TransactionKind; onBack: () => void; onColorChange: (kind: TransactionKind, color: string) => Promise<boolean>; onDelete: (id: number) => Promise<boolean>; onSave: (entry: FixedEntryInput) => Promise<boolean> }) {
-  const [editing, setEditing] = useState<FinancialEntry | null>(null); const [isFormOpen, setIsFormOpen] = useState(false); const label = kind === 'income' ? '固定收入' : '固定支出';
-  const requestDelete = (entry: FinancialEntry): void => Alert.alert(`刪除「${entry.category}」？`, '刪除後日曆也不會再顯示這個固定項目。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => { void onDelete(entry.id); } }]);
+function InfoParagraph({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <View style={styles.infoParagraph}>
+      <Text style={styles.infoParagraphTitle}>{title}</Text>
+      <Text style={styles.infoParagraphBody}>{children}</Text>
+    </View>
+  );
+}
+function FixedEntryListPage({
+  categories,
+  color,
+  entries,
+  isSaving,
+  kind,
+  onBack,
+  onColorChange,
+  onDelete,
+  onSave,
+}: {
+  categories: ReadonlyArray<TransactionCategory>;
+  color: string;
+  entries: ReadonlyArray<FinancialEntry>;
+  isSaving: boolean;
+  kind: TransactionKind;
+  onBack: () => void;
+  onColorChange: (kind: TransactionKind, color: string) => Promise<boolean>;
+  onDelete: (id: number) => Promise<boolean>;
+  onSave: (entry: FixedEntryInput) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState<FinancialEntry | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const label = kind === "income" ? "固定收入" : "固定支出";
+  const requestDelete = (entry: FinancialEntry): void =>
+    Alert.alert(
+      `刪除「${entry.category}」？`,
+      "刪除後日曆也不會再顯示這個固定項目。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "刪除",
+          style: "destructive",
+          onPress: () => {
+            void onDelete(entry.id);
+          },
+        },
+      ],
+    );
   const totalAmount = entries.reduce((sum, entry) => sum + entry.amount, 0);
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><SubpageHeader onBack={onBack} title={`${label}清單`} /><View style={styles.fixedColorSection}><Text style={styles.fixedColorTitle}>選擇你的標示色</Text><Text style={styles.fixedColorDescription}>這個顏色會套用到整份{label}清單與日曆。</Text><View style={styles.colorPalette}>{fixedEntryPalette.map((itemColor) => <Pressable accessibilityRole="radio" accessibilityState={{ checked: color === itemColor }} key={itemColor} onPress={() => { void onColorChange(kind, itemColor); }} style={[styles.colorOption, { backgroundColor: itemColor }, color === itemColor && styles.colorOptionSelected]}>{color === itemColor && <Text style={styles.colorCheck}>✓</Text>}</Pressable>)}</View></View><View style={[styles.fixedListTotalCard, { borderTopColor: color }]}><Text style={styles.fixedListTotalLabel}>{label}總合</Text><Text style={styles.fixedListTotalValue}>{money(totalAmount)}</Text></View><Text style={styles.fixedListHeading}>{label}清單</Text>{entries.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>尚未建立{label}</Text></View> : entries.map((entry) => <Pressable key={entry.id} onPress={() => { setEditing(entry); setIsFormOpen(true); }} style={[styles.fixedEntryManageCard, { borderLeftColor: color }]}><View style={styles.fixedEntryManageTop}><Text style={styles.fixedEntryManageTitle}>{entry.category}</Text><Text style={styles.fixedEntryManageAmount}>{money(entry.amount)}</Text></View><Text style={styles.fixedEntryManageMeta}>每月 {entry.day_of_month} 日・{entry.note || '沒有備註'}</Text><Pressable hitSlop={8} onPress={() => requestDelete(entry)} style={styles.inlineDeleteButton}><Text style={styles.inlineDeleteText}>刪除</Text></Pressable></Pressable>)}<Pressable onPress={() => { setEditing(null); setIsFormOpen(true); }} style={styles.financeAddButton}><Text style={styles.financeAddButtonText}>＋ 新增{label}</Text></Pressable></ScrollView><FixedEntryForm categories={categories} color={color} initialEntry={editing} isOpen={isFormOpen} isSaving={isSaving} kind={kind} onCancel={() => { setIsFormOpen(false); setEditing(null); }} onSave={onSave} /></View>;
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <SubpageHeader onBack={onBack} title={`${label}清單`} />
+        <View style={styles.fixedColorSection}>
+          <Text style={styles.fixedColorTitle}>選擇你的標示色</Text>
+          <Text style={styles.fixedColorDescription}>
+            這個顏色會套用到整份{label}清單與日曆。
+          </Text>
+          <View style={styles.colorPalette}>
+            {fixedEntryPalette.map((itemColor) => (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: color === itemColor }}
+                key={itemColor}
+                onPress={() => {
+                  void onColorChange(kind, itemColor);
+                }}
+                style={[
+                  styles.colorOption,
+                  { backgroundColor: itemColor },
+                  color === itemColor && styles.colorOptionSelected,
+                ]}
+              >
+                {color === itemColor && (
+                  <Text style={styles.colorCheck}>✓</Text>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+        <View style={[styles.fixedListTotalCard, { borderTopColor: color }]}>
+          <Text style={styles.fixedListTotalLabel}>{label}總合</Text>
+          <Text style={styles.fixedListTotalValue}>{money(totalAmount)}</Text>
+        </View>
+        <Text style={styles.fixedListHeading}>{label}清單</Text>
+        {entries.length === 0 ? (
+          <View style={styles.emptyDreams}>
+            <Text style={styles.emptyDreamsTitle}>尚未建立{label}</Text>
+          </View>
+        ) : (
+          entries.map((entry) => (
+            <Pressable
+              key={entry.id}
+              onPress={() => {
+                setEditing(entry);
+                setIsFormOpen(true);
+              }}
+              style={[styles.fixedEntryManageCard, { borderLeftColor: color }]}
+            >
+              <View style={styles.fixedEntryManageTop}>
+                <Text style={styles.fixedEntryManageTitle}>
+                  {entry.category}
+                </Text>
+                <Text style={styles.fixedEntryManageAmount}>
+                  {money(entry.amount)}
+                </Text>
+              </View>
+              <Text style={styles.fixedEntryManageMeta}>
+                每月 {entry.day_of_month} 日・{entry.note || "沒有備註"}
+              </Text>
+              <Pressable
+                hitSlop={8}
+                onPress={() => requestDelete(entry)}
+                style={styles.inlineDeleteButton}
+              >
+                <Text style={styles.inlineDeleteText}>刪除</Text>
+              </Pressable>
+            </Pressable>
+          ))
+        )}
+        <Pressable
+          onPress={() => {
+            setEditing(null);
+            setIsFormOpen(true);
+          }}
+          style={styles.financeAddButton}
+        >
+          <Text style={styles.financeAddButtonText}>＋ 新增{label}</Text>
+        </Pressable>
+      </ScrollView>
+      <FixedEntryForm
+        categories={categories}
+        color={color}
+        initialEntry={editing}
+        isOpen={isFormOpen}
+        isSaving={isSaving}
+        kind={kind}
+        onCancel={() => {
+          setIsFormOpen(false);
+          setEditing(null);
+        }}
+        onSave={onSave}
+      />
+    </View>
+  );
 }
-function FixedEntryForm({ categories, color, initialEntry, isOpen, isSaving, kind, onCancel, onSave }: { categories: ReadonlyArray<TransactionCategory>; color: string; initialEntry: FinancialEntry | null; isOpen: boolean; isSaving: boolean; kind: TransactionKind; onCancel: () => void; onSave: (entry: FixedEntryInput) => Promise<boolean> }) {
-  const [category, setCategory] = useState(initialEntry?.category ?? categories[0]?.name ?? ''); const [entryAmount, setEntryAmount] = useState(initialEntry ? formatAmountInput(String(initialEntry.amount)) : ''); const [day, setDay] = useState(initialEntry?.day_of_month ?? 1); const [note, setNote] = useState(initialEntry?.note ?? '');
-  useEffect(() => { if (isOpen) { setCategory(initialEntry?.category ?? categories[0]?.name ?? ''); setEntryAmount(initialEntry ? formatAmountInput(String(initialEntry.amount)) : ''); setDay(initialEntry?.day_of_month ?? 1); setNote(initialEntry?.note ?? ''); } }, [categories, initialEntry, isOpen]);
-  const parsedAmount = amount(entryAmount); const submit = (): void => { if (category === '' || parsedAmount === null || parsedAmount <= 0) { Alert.alert('請完成固定財務資料', '請選擇類別並輸入大於 0 的金額。'); return; } void (async (): Promise<void> => { if (await onSave({ id: initialEntry?.id, kind, category, amount: parsedAmount, dayOfMonth: day, note, color })) onCancel(); })(); };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled"><Text style={styles.modalTitle}>{initialEntry ? '修改' : '新增'}{kind === 'income' ? '固定收入' : '固定支出'}</Text><Text style={styles.fieldLabel}>{kind === 'income' ? '收入' : '支出'}類別</Text><View style={styles.categoryPickerBox}><Picker selectedValue={category} onValueChange={(value: string) => setCategory(value)}>{categories.map((item) => <Picker.Item key={item.id} label={item.name} value={item.name} />)}</Picker></View><Text style={styles.fieldLabel}>固定金額</Text><TextInput keyboardType="numeric" style={styles.modalInput} value={entryAmount} onChangeText={(value) => setEntryAmount(formatAmountInput(value))} /><Text style={styles.fieldLabel}>{kind === 'income' ? '收入' : '支出'}日期</Text><View style={styles.categoryPickerBox}><Picker selectedValue={day} onValueChange={(value: number) => setDay(value)}>{Array.from({ length: 31 }, (_, index) => <Picker.Item key={index + 1} label={`每月 ${index + 1} 日`} value={index + 1} />)}</Picker></View><Text style={styles.fieldLabel}>備註</Text><TextInput multiline style={[styles.modalInput, styles.noteInput]} value={note} onChangeText={setNote} /><Pressable disabled={isSaving} onPress={submit} style={[styles.modalPrimaryButton, isSaving && styles.disabled]}><Text style={styles.buttonText}>完成</Text></Pressable><Pressable onPress={onCancel} style={styles.modalCancelButton}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+function FixedEntryForm({
+  categories,
+  color,
+  initialEntry,
+  isOpen,
+  isSaving,
+  kind,
+  onCancel,
+  onSave,
+}: {
+  categories: ReadonlyArray<TransactionCategory>;
+  color: string;
+  initialEntry: FinancialEntry | null;
+  isOpen: boolean;
+  isSaving: boolean;
+  kind: TransactionKind;
+  onCancel: () => void;
+  onSave: (entry: FixedEntryInput) => Promise<boolean>;
+}) {
+  const [category, setCategory] = useState(
+    initialEntry?.category ?? categories[0]?.name ?? "",
+  );
+  const [entryAmount, setEntryAmount] = useState(
+    initialEntry ? formatAmountInput(String(initialEntry.amount)) : "",
+  );
+  const [day, setDay] = useState(initialEntry?.day_of_month ?? 1);
+  const [note, setNote] = useState(initialEntry?.note ?? "");
+  useEffect(() => {
+    if (isOpen) {
+      setCategory(initialEntry?.category ?? categories[0]?.name ?? "");
+      setEntryAmount(
+        initialEntry ? formatAmountInput(String(initialEntry.amount)) : "",
+      );
+      setDay(initialEntry?.day_of_month ?? 1);
+      setNote(initialEntry?.note ?? "");
+    }
+  }, [categories, initialEntry, isOpen]);
+  const parsedAmount = amount(entryAmount);
+  const submit = (): void => {
+    if (category === "" || parsedAmount === null || parsedAmount <= 0) {
+      Alert.alert("請完成固定財務資料", "請選擇類別並輸入大於 0 的金額。");
+      return;
+    }
+    void (async (): Promise<void> => {
+      if (
+        await onSave({
+          id: initialEntry?.id,
+          kind,
+          category,
+          amount: parsedAmount,
+          dayOfMonth: day,
+          note,
+          color,
+        })
+      )
+        onCancel();
+    })();
+  };
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.modalTitle}>
+                {initialEntry ? "修改" : "新增"}
+                {kind === "income" ? "固定收入" : "固定支出"}
+              </Text>
+              <Text style={styles.fieldLabel}>
+                {kind === "income" ? "收入" : "支出"}類別
+              </Text>
+              <View style={styles.categoryPickerBox}>
+                <Picker
+                  selectedValue={category}
+                  onValueChange={(value: string) => setCategory(value)}
+                >
+                  {categories.map((item) => (
+                    <Picker.Item
+                      key={item.id}
+                      label={item.name}
+                      value={item.name}
+                    />
+                  ))}
+                </Picker>
+              </View>
+              <Text style={styles.fieldLabel}>固定金額</Text>
+              <TextInput
+                keyboardType="numeric"
+                style={styles.modalInput}
+                value={entryAmount}
+                onChangeText={(value) =>
+                  setEntryAmount(formatAmountInput(value))
+                }
+              />
+              <Text style={styles.fieldLabel}>
+                {kind === "income" ? "收入" : "支出"}日期
+              </Text>
+              <View style={styles.categoryPickerBox}>
+                <Picker
+                  selectedValue={day}
+                  onValueChange={(value: number) => setDay(value)}
+                >
+                  {Array.from({ length: 31 }, (_, index) => (
+                    <Picker.Item
+                      key={index + 1}
+                      label={`每月 ${index + 1} 日`}
+                      value={index + 1}
+                    />
+                  ))}
+                </Picker>
+              </View>
+              <Text style={styles.fieldLabel}>備註</Text>
+              <TextInput
+                multiline
+                style={[styles.modalInput, styles.noteInput]}
+                value={note}
+                onChangeText={setNote}
+              />
+              <Pressable
+                disabled={isSaving}
+                onPress={submit}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+              >
+                <Text style={styles.buttonText}>完成</Text>
+              </Pressable>
+              <Pressable onPress={onCancel} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
-function CategoryListPage({ categories, isSaving, kind, onAdd, onBack, onDelete, onUpdate }: { categories: ReadonlyArray<TransactionCategory>; isSaving: boolean; kind: TransactionKind; onAdd: (kind: TransactionKind, name: string) => Promise<boolean>; onBack: () => void; onDelete: (id: number) => Promise<boolean>; onUpdate: (id: number, name: string) => Promise<boolean> }) {
-  const [editing, setEditing] = useState<TransactionCategory | null>(null); const [isFormOpen, setIsFormOpen] = useState(false); const label = kind === 'income' ? '收入類別' : '支出類別';
-  const requestDelete = (item: TransactionCategory): void => Alert.alert(`刪除「${item.name}」？`, '既有紀錄不會被刪除，但之後無法再選擇這個類別。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => { void onDelete(item.id); } }]);
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.pageContent}><SubpageHeader onBack={onBack} title={label} /><View style={styles.categoryManageList}>{categories.map((item) => { const protectedItem = kind === 'expense' && item.name === SYSTEM_EXPENSE_CATEGORY; return <Pressable disabled={protectedItem} key={item.id} onPress={() => { setEditing(item); setIsFormOpen(true); }} style={styles.categoryManageRow}><Text style={styles.profileRowTitle}>{item.name}</Text><View style={styles.categoryManageActions}>{protectedItem ? <Text style={styles.systemItemBadge}>預設・無法刪除</Text> : <><Text style={styles.editHint}>修改</Text><Pressable hitSlop={8} onPress={() => requestDelete(item)}><Text style={styles.inlineDeleteText}>刪除</Text></Pressable></>}</View></Pressable>; })}</View><Pressable onPress={() => { setEditing(null); setIsFormOpen(true); }} style={styles.financeAddButton}><Text style={styles.financeAddButtonText}>＋ 新增{label}</Text></Pressable></ScrollView><CategoryEditForm initialItem={editing} isOpen={isFormOpen} isSaving={isSaving} kind={kind} onCancel={() => { setIsFormOpen(false); setEditing(null); }} onSave={async (name) => editing ? onUpdate(editing.id, name) : onAdd(kind, name)} /></View>;
+function CategoryListPage({
+  categories,
+  isSaving,
+  kind,
+  onAdd,
+  onBack,
+  onDelete,
+  onUpdate,
+}: {
+  categories: ReadonlyArray<TransactionCategory>;
+  isSaving: boolean;
+  kind: TransactionKind;
+  onAdd: (kind: TransactionKind, name: string) => Promise<boolean>;
+  onBack: () => void;
+  onDelete: (id: number) => Promise<boolean>;
+  onUpdate: (id: number, name: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState<TransactionCategory | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const label = kind === "income" ? "收入類別" : "支出類別";
+  const requestDelete = (item: TransactionCategory): void =>
+    Alert.alert(
+      `刪除「${item.name}」？`,
+      "既有紀錄不會被刪除，但之後無法再選擇這個類別。",
+      [
+        { text: "取消", style: "cancel" },
+        {
+          text: "刪除",
+          style: "destructive",
+          onPress: () => {
+            void onDelete(item.id);
+          },
+        },
+      ],
+    );
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.pageContent}>
+        <SubpageHeader onBack={onBack} title={label} />
+        <View style={styles.categoryManageList}>
+          {categories.map((item) => {
+            const protectedItem =
+              kind === "expense" && item.name === SYSTEM_EXPENSE_CATEGORY;
+            return (
+              <Pressable
+                disabled={protectedItem}
+                key={item.id}
+                onPress={() => {
+                  setEditing(item);
+                  setIsFormOpen(true);
+                }}
+                style={styles.categoryManageRow}
+              >
+                <Text style={styles.profileRowTitle}>{item.name}</Text>
+                <View style={styles.categoryManageActions}>
+                  {protectedItem ? (
+                    <Text style={styles.systemItemBadge}>預設・無法刪除</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.editHint}>修改</Text>
+                      <Pressable
+                        hitSlop={8}
+                        onPress={() => requestDelete(item)}
+                      >
+                        <Text style={styles.inlineDeleteText}>刪除</Text>
+                      </Pressable>
+                    </>
+                  )}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Pressable
+          onPress={() => {
+            setEditing(null);
+            setIsFormOpen(true);
+          }}
+          style={styles.financeAddButton}
+        >
+          <Text style={styles.financeAddButtonText}>＋ 新增{label}</Text>
+        </Pressable>
+      </ScrollView>
+      <CategoryEditForm
+        initialItem={editing}
+        isOpen={isFormOpen}
+        isSaving={isSaving}
+        kind={kind}
+        onCancel={() => {
+          setIsFormOpen(false);
+          setEditing(null);
+        }}
+        onSave={async (name) =>
+          editing ? onUpdate(editing.id, name) : onAdd(kind, name)
+        }
+      />
+    </View>
+  );
 }
-function CategoryEditForm({ initialItem, isOpen, isSaving, kind, onCancel, onSave }: { initialItem: TransactionCategory | null; isOpen: boolean; isSaving: boolean; kind: TransactionKind; onCancel: () => void; onSave: (name: string) => Promise<boolean> }) { const [name, setName] = useState(initialItem?.name ?? ''); useEffect(() => { if (isOpen) setName(initialItem?.name ?? ''); }, [initialItem, isOpen]); const submit = (): void => { if (name.trim() === '') { Alert.alert('請輸入類別名稱'); return; } void (async (): Promise<void> => { if (await onSave(name.trim())) onCancel(); })(); }; return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onCancel}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><View style={styles.modalScrollContent}><Text style={styles.modalTitle}>{initialItem ? '修改' : '新增'}{kind === 'income' ? '收入' : '支出'}類別</Text><TextInput autoFocus style={styles.modalInput} value={name} onChangeText={setName} /><Pressable disabled={isSaving} onPress={submit} style={[styles.modalPrimaryButton, isSaving && styles.disabled]}><Text style={styles.buttonText}>完成</Text></Pressable><Pressable onPress={onCancel} style={styles.modalCancelButton}><Text style={styles.modalCancelText}>取消</Text></Pressable></View></View></View></KeyboardAvoidingView></Modal>; }
-function SubpageHeader({ onBack, title }: { onBack: () => void; title: string }) { return <View style={styles.subpageHeader}><Pressable hitSlop={10} onPress={onBack}><Text style={styles.subpageBack}>‹</Text></Pressable><Text style={styles.subpageTitle}>{title}</Text><View style={styles.settingsSpacer} /></View>; }
-function CategoryForm({ initialKind, isOpen, isSaving, onCancel, onComplete }: { initialKind: TransactionKind; isOpen: boolean; isSaving: boolean; onCancel: () => void; onComplete: (kind: TransactionKind, name: string) => Promise<boolean> }) {
-  const [name, setName] = useState('');
-  const close = (): void => { setName(''); onCancel(); };
-  const submit = (): void => { if (name.trim() === '') { Alert.alert('請輸入類別名稱'); return; } void (async (): Promise<void> => { const succeeded = await onComplete(initialKind, name.trim()); if (succeeded) close(); })(); };
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={close}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><View style={styles.modalScrollContent}><Text style={styles.modalTitle}>新增{initialKind === 'income' ? '收入' : '支出'}類別</Text><Text style={styles.modalDescription}>新增後會出現在日曆收支項目的類別滾輪。</Text><Text style={styles.fieldLabel}>類別名稱</Text><TextInput autoFocus placeholder={initialKind === 'income' ? '例如：獎金' : '例如：交通費'} placeholderTextColor="#9AA5B4" style={styles.modalInput} value={name} onChangeText={setName} /><Pressable disabled={isSaving} style={[styles.modalPrimaryButton, isSaving && styles.disabled]} onPress={submit}>{isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>完成</Text>}</Pressable><Pressable style={styles.modalCancelButton} onPress={close}><Text style={styles.modalCancelText}>取消</Text></Pressable></View></View></View></KeyboardAvoidingView></Modal>;
+function CategoryEditForm({
+  initialItem,
+  isOpen,
+  isSaving,
+  kind,
+  onCancel,
+  onSave,
+}: {
+  initialItem: TransactionCategory | null;
+  isOpen: boolean;
+  isSaving: boolean;
+  kind: TransactionKind;
+  onCancel: () => void;
+  onSave: (name: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState(initialItem?.name ?? "");
+  useEffect(() => {
+    if (isOpen) setName(initialItem?.name ?? "");
+  }, [initialItem, isOpen]);
+  const submit = (): void => {
+    if (name.trim() === "") {
+      Alert.alert("請輸入類別名稱");
+      return;
+    }
+    void (async (): Promise<void> => {
+      if (await onSave(name.trim())) onCancel();
+    })();
+  };
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onCancel}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalScrollContent}>
+              <Text style={styles.modalTitle}>
+                {initialItem ? "修改" : "新增"}
+                {kind === "income" ? "收入" : "支出"}類別
+              </Text>
+              <TextInput
+                autoFocus
+                style={styles.modalInput}
+                value={name}
+                onChangeText={setName}
+              />
+              <Pressable
+                disabled={isSaving}
+                onPress={submit}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+              >
+                <Text style={styles.buttonText}>完成</Text>
+              </Pressable>
+              <Pressable onPress={onCancel} style={styles.modalCancelButton}>
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+function SubpageHeader({
+  onBack,
+  title,
+}: {
+  onBack: () => void;
+  title: string;
+}) {
+  return (
+    <View style={styles.subpageHeader}>
+      <Pressable hitSlop={10} onPress={onBack}>
+        <Text style={styles.subpageBack}>‹</Text>
+      </Pressable>
+      <Text style={styles.subpageTitle}>{title}</Text>
+      <View style={styles.settingsSpacer} />
+    </View>
+  );
+}
+function CategoryForm({
+  initialKind,
+  isOpen,
+  isSaving,
+  onCancel,
+  onComplete,
+}: {
+  initialKind: TransactionKind;
+  isOpen: boolean;
+  isSaving: boolean;
+  onCancel: () => void;
+  onComplete: (kind: TransactionKind, name: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState("");
+  const close = (): void => {
+    setName("");
+    onCancel();
+  };
+  const submit = (): void => {
+    if (name.trim() === "") {
+      Alert.alert("請輸入類別名稱");
+      return;
+    }
+    void (async (): Promise<void> => {
+      const succeeded = await onComplete(initialKind, name.trim());
+      if (succeeded) close();
+    })();
+  };
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={close}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalScrollContent}>
+              <Text style={styles.modalTitle}>
+                新增{initialKind === "income" ? "收入" : "支出"}類別
+              </Text>
+              <Text style={styles.modalDescription}>
+                新增後會出現在日曆收支項目的類別滾輪。
+              </Text>
+              <Text style={styles.fieldLabel}>類別名稱</Text>
+              <TextInput
+                autoFocus
+                placeholder={
+                  initialKind === "income" ? "例如：獎金" : "例如：交通費"
+                }
+                placeholderTextColor="#9AA5B4"
+                style={styles.modalInput}
+                value={name}
+                onChangeText={setName}
+              />
+              <Pressable
+                disabled={isSaving}
+                style={[styles.modalPrimaryButton, isSaving && styles.disabled]}
+                onPress={submit}
+              >
+                {isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>完成</Text>
+                )}
+              </Pressable>
+              <Pressable style={styles.modalCancelButton} onPress={close}>
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 
 type DreamsHomeProps = {
@@ -974,12 +4795,23 @@ type DreamsHomeProps = {
 function DreamsHome(props: DreamsHomeProps) {
   const [selectedDream, setSelectedDream] = useState<Dream | null>(null);
   const [isCompletedListOpen, setIsCompletedListOpen] = useState(false);
-  const [pendingDeleteDream, setPendingDeleteDream] = useState<Dream | null>(null);
-  const completedDreams = props.dreams.filter((dream) => dream.completed_at !== null);
-  const activeDreams = props.dreams.filter((dream) => dream.completed_at === null);
-  const executedBudget = completedDreams.filter((dream) => dream.finance_adjusted === 0).reduce((sum, dream) => sum + dream.target_amount, 0);
+  const [pendingDeleteDream, setPendingDeleteDream] = useState<Dream | null>(
+    null,
+  );
+  const completedDreams = props.dreams.filter(
+    (dream) => dream.completed_at !== null,
+  );
+  const activeDreams = props.dreams.filter(
+    (dream) => dream.completed_at === null,
+  );
+  const executedBudget = completedDreams
+    .filter((dream) => dream.finance_adjusted === 0)
+    .reduce((sum, dream) => sum + dream.target_amount, 0);
   const availableResource = Math.max(0, props.resourceTotal - executedBudget);
-  const currentBudget = activeDreams.reduce((sum, dream) => sum + dream.target_amount, 0);
+  const currentBudget = activeDreams.reduce(
+    (sum, dream) => sum + dream.target_amount,
+    0,
+  );
   const remainingEffort = availableResource - currentBudget;
   let resourceToAllocate = availableResource;
   const activeDreamProgress = activeDreams.map((dream) => {
@@ -987,419 +4819,2669 @@ function DreamsHome(props: DreamsHomeProps) {
     resourceToAllocate = Math.max(0, resourceToAllocate - accumulatedAmount);
     return { dream, accumulatedAmount };
   });
-  const completableDreamCount = activeDreamProgress.filter(({ dream, accumulatedAmount }) => accumulatedAmount >= dream.target_amount).length;
-  const resourceSummary = completableDreamCount > 0 ? `可完成 ${completableDreamCount} 個目標` : `仍需努力 ${money(remainingEffort)}`;
-  const selectedAccumulatedAmount = selectedDream?.completed_at !== null
-    ? selectedDream?.target_amount ?? 0
-    : activeDreamProgress.find(({ dream }) => dream.id === selectedDream?.id)?.accumulatedAmount ?? 0;
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView contentContainerStyle={styles.dreamsContent}><View style={styles.dreamsTopBar}><Text style={styles.dreamsTitle}>夢想未來記帳本</Text><Pressable accessibilityRole="button" onPress={() => setIsCompletedListOpen(true)} style={styles.completedListButton}><Text style={styles.completedListButtonText}>完成清單記錄</Text><View style={styles.completedListBadge}><Text style={styles.completedListBadgeText}>{completedDreams.length}</Text></View></Pressable></View><View style={styles.availableCard}><Text style={styles.availableLabel}>我的資源</Text><Text accessibilityLiveRegion="polite" style={styles.availableValue}>{money(availableResource)}</Text><Text style={styles.availableDetail}>目前預算 {money(currentBudget)} ・ {resourceSummary}</Text></View><View style={styles.dreamsSectionHeader}><Text style={styles.dreamsSectionTitle}>進行中的夢想</Text><Text style={styles.dreamCount}>{activeDreams.length} 個</Text></View>{activeDreams.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>{completedDreams.length > 0 ? '所有夢想都已經執行' : '還沒有夢想目標'}</Text><Text style={styles.emptyDreamsText}>{completedDreams.length > 0 ? '太棒了！你可以到完成清單回顧已執行的目標。' : '建立第一個目標，開始安排你的資源與預算。'}</Text></View> : activeDreamProgress.map(({ dream, accumulatedAmount }) => <DreamCard key={dream.id} accumulatedAmount={accumulatedAmount} dream={dream} onDelete={() => setPendingDeleteDream(dream)} onPress={() => setSelectedDream(dream)} />)}<Pressable accessibilityRole="button" style={styles.createDreamButton} onPress={props.onCreateDream}><Text style={styles.createDreamButtonText}>＋ 新增夢想</Text></Pressable></ScrollView><View style={styles.tabBar}>{tabs.map((tab) => <Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{ selected: tab.key === 'dreams' }} onPress={() => props.setActiveTab(tab.key)} style={styles.tab}><Text style={[styles.icon, tab.key === 'dreams' && styles.active]}>{tab.icon}</Text><Text style={[styles.tabText, tab.key === 'dreams' && styles.active]}>{tab.label}</Text></Pressable>)}</View><DreamForm {...props} /><CompletedDreamsModal dreams={completedDreams} isOpen={isCompletedListOpen} onClose={() => setIsCompletedListOpen(false)} onDelete={(dream) => { setIsCompletedListOpen(false); setPendingDeleteDream(dream); }} onSelect={(dream) => { setIsCompletedListOpen(false); setSelectedDream(dream); }} /><DreamDetail accumulatedAmount={selectedAccumulatedAmount} dream={selectedDream} isSaving={props.isSaving} onClose={() => setSelectedDream(null)} onExecute={props.onExecuteDream} /><DeleteConfirmModal description="刪除後無法復原，相關卡片訊息也會同步調整。" isOpen={pendingDeleteDream !== null} isSaving={props.isSaving} onCancel={() => setPendingDeleteDream(null)} onConfirm={() => { if (pendingDeleteDream) void (async (): Promise<void> => { if (await props.onDeleteDream(pendingDeleteDream.id)) { if (selectedDream?.id === pendingDeleteDream.id) setSelectedDream(null); setPendingDeleteDream(null); } })(); }} /></View>;
+  const completableDreamCount = activeDreamProgress.filter(
+    ({ dream, accumulatedAmount }) => accumulatedAmount >= dream.target_amount,
+  ).length;
+  const resourceSummary =
+    completableDreamCount > 0
+      ? `可完成 ${completableDreamCount} 個目標`
+      : `仍需努力 ${money(remainingEffort)}`;
+  const selectedAccumulatedAmount =
+    selectedDream?.completed_at !== null
+      ? (selectedDream?.target_amount ?? 0)
+      : (activeDreamProgress.find(({ dream }) => dream.id === selectedDream?.id)
+          ?.accumulatedAmount ?? 0);
+  return (
+    <View style={styles.container}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={styles.dreamsContent}>
+        <View style={styles.dreamsTopBar}>
+          <Text style={styles.dreamsTitle}>夢想未來記帳本</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setIsCompletedListOpen(true)}
+            style={styles.completedListButton}
+          >
+            <Text style={styles.completedListButtonText}>完成清單記錄</Text>
+            <View style={styles.completedListBadge}>
+              <Text style={styles.completedListBadgeText}>
+                {completedDreams.length}
+              </Text>
+            </View>
+          </Pressable>
+        </View>
+        <View style={styles.availableCard}>
+          <Text style={styles.availableLabel}>我的資源</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.availableValue}>
+            {money(availableResource)}
+          </Text>
+          <Text style={styles.availableDetail}>
+            目前預算 {money(currentBudget)} ・ {resourceSummary}
+          </Text>
+        </View>
+        <View style={styles.dreamsSectionHeader}>
+          <Text style={styles.dreamsSectionTitle}>進行中的夢想</Text>
+          <Text style={styles.dreamCount}>{activeDreams.length} 個</Text>
+        </View>
+        {activeDreams.length === 0 ? (
+          <View style={styles.emptyDreams}>
+            <Text style={styles.emptyDreamsTitle}>
+              {completedDreams.length > 0
+                ? "所有夢想都已經執行"
+                : "還沒有夢想目標"}
+            </Text>
+            <Text style={styles.emptyDreamsText}>
+              {completedDreams.length > 0
+                ? "太棒了！你可以到完成清單回顧已執行的目標。"
+                : "建立第一個目標，開始安排你的資源與預算。"}
+            </Text>
+          </View>
+        ) : (
+          activeDreamProgress.map(({ dream, accumulatedAmount }) => (
+            <DreamCard
+              key={dream.id}
+              accumulatedAmount={accumulatedAmount}
+              dream={dream}
+              onDelete={() => setPendingDeleteDream(dream)}
+              onPress={() => setSelectedDream(dream)}
+            />
+          ))
+        )}
+        <Pressable
+          accessibilityRole="button"
+          style={styles.createDreamButton}
+          onPress={props.onCreateDream}
+        >
+          <Text style={styles.createDreamButtonText}>＋ 新增夢想</Text>
+        </Pressable>
+      </ScrollView>
+      <View style={styles.tabBar}>
+        {tabs.map((tab) => (
+          <Pressable
+            key={tab.key}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab.key === "dreams" }}
+            onPress={() => props.setActiveTab(tab.key)}
+            style={styles.tab}
+          >
+            <Text style={[styles.icon, tab.key === "dreams" && styles.active]}>
+              {tab.icon}
+            </Text>
+            <Text
+              style={[styles.tabText, tab.key === "dreams" && styles.active]}
+            >
+              {tab.label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <DreamForm {...props} />
+      <CompletedDreamsModal
+        dreams={completedDreams}
+        isOpen={isCompletedListOpen}
+        onClose={() => setIsCompletedListOpen(false)}
+        onDelete={(dream) => {
+          setIsCompletedListOpen(false);
+          setPendingDeleteDream(dream);
+        }}
+        onSelect={(dream) => {
+          setIsCompletedListOpen(false);
+          setSelectedDream(dream);
+        }}
+      />
+      <DreamDetail
+        accumulatedAmount={selectedAccumulatedAmount}
+        dream={selectedDream}
+        isSaving={props.isSaving}
+        onClose={() => setSelectedDream(null)}
+        onExecute={props.onExecuteDream}
+      />
+      <DeleteConfirmModal
+        description="刪除後無法復原，相關卡片訊息也會同步調整。"
+        isOpen={pendingDeleteDream !== null}
+        isSaving={props.isSaving}
+        onCancel={() => setPendingDeleteDream(null)}
+        onConfirm={() => {
+          if (pendingDeleteDream)
+            void (async (): Promise<void> => {
+              if (await props.onDeleteDream(pendingDeleteDream.id)) {
+                if (selectedDream?.id === pendingDeleteDream.id)
+                  setSelectedDream(null);
+                setPendingDeleteDream(null);
+              }
+            })();
+        }}
+      />
+    </View>
+  );
 }
-function CompletedDreamsModal({ dreams, isOpen, onClose, onDelete, onSelect }: { dreams: ReadonlyArray<Dream>; isOpen: boolean; onClose: () => void; onDelete: (dream: Dream) => void; onSelect: (dream: Dream) => void }) {
-  return <Modal animationType="slide" transparent visible={isOpen} onRequestClose={onClose}><View style={styles.modalOverlay}><View style={styles.completedListSheet}><View style={styles.completedListHeader}><View><Text style={styles.modalTitle}>完成清單記錄</Text><Text style={styles.completedListSubtitle}>收藏每一個已經執行的夢想</Text></View><Pressable accessibilityLabel="關閉完成清單" hitSlop={10} onPress={onClose} style={styles.completedListClose}><Text style={styles.completedListCloseText}>×</Text></Pressable></View><ScrollView contentContainerStyle={styles.completedListContent} showsVerticalScrollIndicator={false}>{dreams.length === 0 ? <View style={styles.emptyDreams}><Text style={styles.emptyDreamsTitle}>還沒有完成的夢想</Text><Text style={styles.emptyDreamsText}>目標金額達成後，在夢想詳情按下「執行」，卡片才會移到這裡。</Text></View> : dreams.map((dream) => <DreamCard key={dream.id} accumulatedAmount={dream.target_amount} dream={dream} onDelete={() => onDelete(dream)} onPress={() => onSelect(dream)} />)}</ScrollView></View></View></Modal>;
+function CompletedDreamsModal({
+  dreams,
+  isOpen,
+  onClose,
+  onDelete,
+  onSelect,
+}: {
+  dreams: ReadonlyArray<Dream>;
+  isOpen: boolean;
+  onClose: () => void;
+  onDelete: (dream: Dream) => void;
+  onSelect: (dream: Dream) => void;
+}) {
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={isOpen}
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.completedListSheet}>
+          <View style={styles.completedListHeader}>
+            <View>
+              <Text style={styles.modalTitle}>完成清單記錄</Text>
+              <Text style={styles.completedListSubtitle}>
+                收藏每一個已經執行的夢想
+              </Text>
+            </View>
+            <Pressable
+              accessibilityLabel="關閉完成清單"
+              hitSlop={10}
+              onPress={onClose}
+              style={styles.completedListClose}
+            >
+              <Text style={styles.completedListCloseText}>×</Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            contentContainerStyle={styles.completedListContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {dreams.length === 0 ? (
+              <View style={styles.emptyDreams}>
+                <Text style={styles.emptyDreamsTitle}>還沒有完成的夢想</Text>
+                <Text style={styles.emptyDreamsText}>
+                  目標金額達成後，在夢想詳情按下「執行」，卡片才會移到這裡。
+                </Text>
+              </View>
+            ) : (
+              dreams.map((dream) => (
+                <DreamCard
+                  key={dream.id}
+                  accumulatedAmount={dream.target_amount}
+                  dream={dream}
+                  onDelete={() => onDelete(dream)}
+                  onPress={() => onSelect(dream)}
+                />
+              ))
+            )}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
 }
-function DreamCard({ accumulatedAmount, dream, onDelete, onPress }: { accumulatedAmount: number; dream: Dream; onDelete: () => void; onPress: () => void }) {
-  const percent = dream.target_amount === 0 ? 0 : Math.min(100, Math.round((accumulatedAmount / dream.target_amount) * 100));
+function DreamCard({
+  accumulatedAmount,
+  dream,
+  onDelete,
+  onPress,
+}: {
+  accumulatedAmount: number;
+  dream: Dream;
+  onDelete: () => void;
+  onPress: () => void;
+}) {
+  const percent =
+    dream.target_amount === 0
+      ? 0
+      : Math.min(
+          100,
+          Math.round((accumulatedAmount / dream.target_amount) * 100),
+        );
   const remainingAmount = Math.max(0, dream.target_amount - accumulatedAmount);
-  const months = dream.monthly_allocation === 0 ? null : Math.ceil(remainingAmount / dream.monthly_allocation);
-  const timing = dream.completed_at ? `完成於 ${new Date(dream.completed_at).toLocaleString('zh-TW', { dateStyle: 'medium', timeStyle: 'short' })}` : dream.target_date ? `預計 ${dateDisplayValue(dream.target_date)}達成` : months === null ? '尚未安排每月分配' : `約 ${months} 個月後達成`;
-  return <SwipeableDreamCard onDelete={onDelete}><Pressable accessibilityHint="查看夢想進度詳情，向左滑動可以刪除" accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.dreamCard, styles.swipeDreamForeground, pressed && styles.dreamCardPressed]}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.dreamImage} /> : <View style={styles.dreamIcon}><Text style={styles.dreamIconText}>✦</Text></View>}<View style={styles.dreamMeta}><View style={styles.dreamTitleLine}><Text numberOfLines={1} style={styles.dreamName}>{dream.title}</Text><Text style={styles.dreamPercent}>{percent}%</Text></View><Text style={styles.dreamDetail}>目前累積 {money(accumulatedAmount)}／{money(dream.target_amount)}</Text><Text style={styles.dreamTiming}>{timing}</Text><View style={styles.dreamProgressTrack}><View style={[styles.dreamProgressFill, { width: `${percent}%` as `${number}%` }]} /></View></View></Pressable></SwipeableDreamCard>;
+  const months =
+    dream.monthly_allocation === 0
+      ? null
+      : Math.ceil(remainingAmount / dream.monthly_allocation);
+  const timing = dream.completed_at
+    ? t(`完成於 ${new Date(dream.completed_at).toLocaleString(appLocale, { dateStyle: "medium", timeStyle: "short" })}`)
+    : dream.target_date
+      ? `預計 ${dateDisplayValue(dream.target_date)}達成`
+      : months === null
+        ? "尚未安排每月分配"
+        : `約 ${months} 個月後達成`;
+  return (
+    <SwipeableDreamCard onDelete={onDelete}>
+      <Pressable
+        accessibilityHint="查看夢想進度詳情，向左滑動可以刪除"
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.dreamCard,
+          styles.swipeDreamForeground,
+          pressed && styles.dreamCardPressed,
+        ]}
+      >
+        {dream.image_uri ? (
+          <Image source={{ uri: dream.image_uri }} style={styles.dreamImage} />
+        ) : (
+          <View style={styles.dreamIcon}>
+            <Text style={styles.dreamIconText}>✦</Text>
+          </View>
+        )}
+        <View style={styles.dreamMeta}>
+          <View style={styles.dreamTitleLine}>
+            <Text numberOfLines={1} style={styles.dreamName}>
+              {dream.title}
+            </Text>
+            <Text style={styles.dreamPercent}>{percent}%</Text>
+          </View>
+          <Text style={styles.dreamDetail}>
+            目前累積 {money(accumulatedAmount)}／{money(dream.target_amount)}
+          </Text>
+          <Text style={styles.dreamTiming}>{timing}</Text>
+          <View style={styles.dreamProgressTrack}>
+            <View
+              style={[
+                styles.dreamProgressFill,
+                { width: `${percent}%` as `${number}%` },
+              ]}
+            />
+          </View>
+        </View>
+      </Pressable>
+    </SwipeableDreamCard>
+  );
 }
-function SwipeableDreamCard({ children, onDelete }: { children: ReactNode; onDelete: () => void }) {
+function SwipeableDreamCard({
+  children,
+  onDelete,
+}: {
+  children: ReactNode;
+  onDelete: () => void;
+}) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const settle = (open: boolean): void => { Animated.spring(translateX, { friction: 8, tension: 90, toValue: open ? -76 : 0, useNativeDriver: true }).start(); };
-  const panResponder = useRef(PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-    onMoveShouldSetPanResponderCapture: (_event, gesture) => Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
-    onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
-    onPanResponderTerminate: () => settle(false),
-    onPanResponderTerminationRequest: () => false,
-    onShouldBlockNativeResponder: () => true,
-  })).current;
-  return <View style={styles.dreamSwipeRow}><Pressable accessibilityLabel="刪除這個夢想" onPress={onDelete} style={styles.swipeDeleteAction}><Text style={styles.swipeDeleteIcon}>🗑️</Text></Pressable><Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>{children}</Animated.View></View>;
+  const settle = (open: boolean): void => {
+    Animated.spring(translateX, {
+      friction: 8,
+      tension: 90,
+      toValue: open ? -76 : 0,
+      useNativeDriver: true,
+    }).start();
+  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+        Math.abs(gesture.dx) > 8 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onPanResponderMove: (_event, gesture) =>
+        translateX.setValue(Math.max(-76, Math.min(0, gesture.dx))),
+      onPanResponderRelease: (_event, gesture) => settle(gesture.dx < -34),
+      onPanResponderTerminate: () => settle(false),
+      onPanResponderTerminationRequest: () => false,
+      onShouldBlockNativeResponder: () => true,
+    }),
+  ).current;
+  return (
+    <View style={styles.dreamSwipeRow}>
+      <Pressable
+        accessibilityLabel="刪除這個夢想"
+        onPress={onDelete}
+        style={styles.swipeDeleteAction}
+      >
+        <Text style={styles.swipeDeleteIcon}>🗑️</Text>
+      </Pressable>
+      <Animated.View
+        {...panResponder.panHandlers}
+        style={{ transform: [{ translateX }] }}
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
 }
-function DreamDetail({ accumulatedAmount, dream, isSaving, onClose, onExecute }: { accumulatedAmount: number; dream: Dream | null; isSaving: boolean; onClose: () => void; onExecute: (id: number) => Promise<boolean> }) {
+function DreamDetail({
+  accumulatedAmount,
+  dream,
+  isSaving,
+  onClose,
+  onExecute,
+}: {
+  accumulatedAmount: number;
+  dream: Dream | null;
+  isSaving: boolean;
+  onClose: () => void;
+  onExecute: (id: number) => Promise<boolean>;
+}) {
   const [executionCancelled, setExecutionCancelled] = useState(false);
-  useEffect(() => { setExecutionCancelled(false); }, [dream]);
+  useEffect(() => {
+    setExecutionCancelled(false);
+  }, [dream]);
   if (dream === null) return null;
-  const percent = dream.target_amount === 0 ? 0 : Math.min(100, Math.round((accumulatedAmount / dream.target_amount) * 100));
-  const expired = dream.target_date !== null && new Date(`${dream.target_date}T23:59:59`).getTime() < Date.now();
+  const percent =
+    dream.target_amount === 0
+      ? 0
+      : Math.min(
+          100,
+          Math.round((accumulatedAmount / dream.target_amount) * 100),
+        );
+  const expired =
+    dream.target_date !== null &&
+    new Date(`${dream.target_date}T23:59:59`).getTime() < Date.now();
   const remainingAmount = Math.max(0, dream.target_amount - accumulatedAmount);
-  const months = dream.monthly_allocation === 0 ? null : Math.ceil(remainingAmount / dream.monthly_allocation);
-  const timing = dream.target_date ? `預計達成時間　${dateDisplayValue(dream.target_date)}` : months === null ? '尚未安排每月分配' : `依目前投入估算，約 ${months} 個月後達成`;
-  const execute = (): void => { void (async (): Promise<void> => { if (await onExecute(dream.id)) onClose(); })(); };
+  const months =
+    dream.monthly_allocation === 0
+      ? null
+      : Math.ceil(remainingAmount / dream.monthly_allocation);
+  const timing = dream.target_date
+    ? `預計達成時間　${dateDisplayValue(dream.target_date)}`
+    : months === null
+      ? "尚未安排每月分配"
+      : `依目前投入估算，約 ${months} 個月後達成`;
+  const execute = (): void => {
+    void (async (): Promise<void> => {
+      if (await onExecute(dream.id)) onClose();
+    })();
+  };
   const canExecute = percent >= 100 && dream.completed_at === null;
-  return <Modal animationType="slide" transparent visible onRequestClose={onClose}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.detailSheet}><ScrollView keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>{dream.image_uri ? <Image source={{ uri: dream.image_uri }} style={styles.detailImage} /> : <View style={styles.detailImageFallback}><Text style={styles.detailImageFallbackText}>✦</Text></View>}<Text style={styles.detailTitle}>{dream.title}</Text><Text style={styles.detailDate}>{timing}</Text><View style={styles.detailAmounts}><View><Text style={styles.detailAmountLabel}>目標金額</Text><Text style={styles.detailAmountValue}>{money(dream.target_amount)}</Text></View><View><Text style={styles.detailAmountLabel}>目前累積</Text><Text style={styles.detailAmountValue}>{money(accumulatedAmount)}</Text></View></View><View style={styles.detailProgressHeader}><Text style={styles.detailProgressLabel}>目前進度</Text><Text style={styles.detailProgressPercent}>{percent}%</Text></View><View style={styles.detailProgressTrack}><View style={[styles.detailProgressFill, { width: `${percent}%` as `${number}%` }]} /></View>{dream.completed_at !== null ? <View style={styles.executedDreamCard}><Text style={styles.executedDreamTitle}>這個夢想已經執行</Text><Text style={styles.executedDreamTime}>{new Date(dream.completed_at).toLocaleString('zh-TW')}</Text></View> : executionCancelled ? <View style={styles.executionCancelledCard}><Text style={styles.executionCancelledText}>這次先不執行，夢想會保留在進行中。</Text><Pressable onPress={() => setExecutionCancelled(false)}><Text style={styles.executionRetryText}>重新選擇</Text></Pressable></View> : <View style={[styles.executionDecision, !canExecute && styles.executionDecisionDisabled]}><Text style={styles.executionDecisionTitle}>是否要執行這個夢想？</Text><Text style={styles.executionDecisionHint}>{canExecute ? '按下執行後，將記錄現在的時間並移到完成清單。' : '個人權益足以讓進度達到 100% 後即可執行。'}</Text><View style={styles.executionActions}><Pressable disabled={!canExecute || isSaving} onPress={execute} style={[styles.executionConfirmButton, (!canExecute || isSaving) && styles.disabled]}>{isSaving ? <ActivityIndicator color="#FFFFFF" size="small" /> : <Text style={styles.executionConfirmText}>執行</Text>}</Pressable><Pressable disabled={isSaving} onPress={() => setExecutionCancelled(true)} style={styles.executionCancelButton}><Text style={styles.executionCancelText}>取消</Text></Pressable></View></View>}{dream.completed_at === null && <View style={[styles.encouragement, expired && !canExecute && styles.encouragementExpired]}><Text style={styles.encouragementIcon}>{canExecute ? '🎆' : expired ? '🌱' : '✨'}</Text><Text style={styles.encouragementText}>{canExecute ? '哇，你真棒，你可以進行這個夢想了' : expired ? '加油，再接再勵' : '加油，你的目標不遠了'}</Text></View>}<Pressable accessibilityRole="button" style={styles.detailCloseButton} onPress={onClose}><Text style={styles.buttonText}>關閉</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.detailSheet}>
+            <ScrollView
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {dream.image_uri ? (
+                <Image
+                  source={{ uri: dream.image_uri }}
+                  style={styles.detailImage}
+                />
+              ) : (
+                <View style={styles.detailImageFallback}>
+                  <Text style={styles.detailImageFallbackText}>✦</Text>
+                </View>
+              )}
+              <Text style={styles.detailTitle}>{dream.title}</Text>
+              <Text style={styles.detailDate}>{timing}</Text>
+              <View style={styles.detailAmounts}>
+                <View>
+                  <Text style={styles.detailAmountLabel}>目標金額</Text>
+                  <Text style={styles.detailAmountValue}>
+                    {money(dream.target_amount)}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={styles.detailAmountLabel}>目前累積</Text>
+                  <Text style={styles.detailAmountValue}>
+                    {money(accumulatedAmount)}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.detailProgressHeader}>
+                <Text style={styles.detailProgressLabel}>目前進度</Text>
+                <Text style={styles.detailProgressPercent}>{percent}%</Text>
+              </View>
+              <View style={styles.detailProgressTrack}>
+                <View
+                  style={[
+                    styles.detailProgressFill,
+                    { width: `${percent}%` as `${number}%` },
+                  ]}
+                />
+              </View>
+              {dream.completed_at !== null ? (
+                <View style={styles.executedDreamCard}>
+                  <Text style={styles.executedDreamTitle}>
+                    這個夢想已經執行
+                  </Text>
+                  <Text style={styles.executedDreamTime}>
+                    {new Date(dream.completed_at).toLocaleString(appLocale)}
+                  </Text>
+                </View>
+              ) : executionCancelled ? (
+                <View style={styles.executionCancelledCard}>
+                  <Text style={styles.executionCancelledText}>
+                    這次先不執行，夢想會保留在進行中。
+                  </Text>
+                  <Pressable onPress={() => setExecutionCancelled(false)}>
+                    <Text style={styles.executionRetryText}>重新選擇</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View
+                  style={[
+                    styles.executionDecision,
+                    !canExecute && styles.executionDecisionDisabled,
+                  ]}
+                >
+                  <Text style={styles.executionDecisionTitle}>
+                    是否要執行這個夢想？
+                  </Text>
+                  <Text style={styles.executionDecisionHint}>
+                    {canExecute
+                      ? "按下執行後，將記錄現在的時間並移到完成清單。"
+                      : "個人權益足以讓進度達到 100% 後即可執行。"}
+                  </Text>
+                  <View style={styles.executionActions}>
+                    <Pressable
+                      disabled={!canExecute || isSaving}
+                      onPress={execute}
+                      style={[
+                        styles.executionConfirmButton,
+                        (!canExecute || isSaving) && styles.disabled,
+                      ]}
+                    >
+                      {isSaving ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={styles.executionConfirmText}>執行</Text>
+                      )}
+                    </Pressable>
+                    <Pressable
+                      disabled={isSaving}
+                      onPress={() => setExecutionCancelled(true)}
+                      style={styles.executionCancelButton}
+                    >
+                      <Text style={styles.executionCancelText}>取消</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+              {dream.completed_at === null && (
+                <View
+                  style={[
+                    styles.encouragement,
+                    expired && !canExecute && styles.encouragementExpired,
+                  ]}
+                >
+                  <Text style={styles.encouragementIcon}>
+                    {canExecute ? "🎆" : expired ? "🌱" : "✨"}
+                  </Text>
+                  <Text style={styles.encouragementText}>
+                    {canExecute
+                      ? "哇，你真棒，你可以進行這個夢想了"
+                      : expired
+                        ? "加油，再接再勵"
+                        : "加油，你的目標不遠了"}
+                  </Text>
+                </View>
+              )}
+              <Pressable
+                accessibilityRole="button"
+                style={styles.detailCloseButton}
+                onPress={onClose}
+              >
+                <Text style={styles.buttonText}>關閉</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 function DreamForm(props: DreamsHomeProps) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [pendingDate, setPendingDate] = useState(startOfToday());
   const openDatePicker = (): void => {
-    setPendingDate(props.dreamTargetDate === '' ? startOfToday() : dateFromStorage(props.dreamTargetDate));
+    setPendingDate(
+      props.dreamTargetDate === ""
+        ? startOfToday()
+        : dateFromStorage(props.dreamTargetDate),
+    );
     setShowDatePicker(true);
   };
-  const handleDateChange = (_event: DateTimePickerChangeEvent, selectedDate: Date): void => {
+  const handleDateChange = (
+    _event: DateTimePickerChangeEvent,
+    selectedDate: Date,
+  ): void => {
     setPendingDate(selectedDate);
-    if (Platform.OS === 'android') {
+    if (Platform.OS === "android") {
       props.onSetTargetDate(dateStorageValue(selectedDate));
       setShowDatePicker(false);
     }
   };
-  return <Modal animationType="slide" transparent visible={props.isFormOpen} onRequestClose={props.onCloseForm}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalKeyboardView}><View style={styles.modalOverlay}><View style={styles.modalSheet}><ScrollView contentContainerStyle={styles.modalScrollContent} keyboardDismissMode="interactive" keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}><Text style={styles.modalTitle}>新增夢想</Text><Text style={styles.modalDescription}>加入一張代表夢想的圖片，讓目標更有感。</Text><Text style={styles.fieldLabel}>夢想圖片</Text><Pressable accessibilityRole="button" style={styles.imagePicker} onPress={props.onPickImage}>{props.dreamImageUri ? <Image source={{ uri: props.dreamImageUri }} style={styles.imagePreview} /> : <View style={styles.imagePlaceholder}><Text style={styles.imagePlaceholderIcon}>＋</Text><Text style={styles.imagePlaceholderText}>從相簿選擇圖片</Text></View>}<View style={styles.imagePickerBadge}><Text style={styles.imagePickerBadgeText}>{props.dreamImageUri ? '更換圖片' : '選擇圖片'}</Text></View></Pressable><Text style={styles.fieldLabel}>夢想名稱</Text><TextInput autoFocus={!props.dreamImageUri} returnKeyType="next" placeholder="例如：2027 冰島旅行" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={props.dreamTitle} onChangeText={props.onSetTitle} /><Text style={styles.fieldLabel}>目標金額</Text><TextInput keyboardType="numeric" returnKeyType="next" placeholder="例如：120,000" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={props.dreamTarget} onChangeText={props.onSetTarget} /><Text style={styles.fieldLabel}>每月分配給這個夢想</Text><TextInput keyboardType="numeric" returnKeyType="done" placeholder="例如：5,000" placeholderTextColor="#9AA5B4" style={styles.modalInput} value={props.dreamAllocation} onChangeText={props.onSetAllocation} /><Text style={styles.fieldLabel}>預計達成日期（選填）</Text><View style={styles.dateFieldRow}><Pressable accessibilityRole="button" accessibilityLabel="選擇預計達成日期" style={styles.dateField} onPress={openDatePicker}><Text style={props.dreamTargetDate === '' ? styles.datePlaceholder : styles.dateValue}>{props.dreamTargetDate === '' ? '選擇日期' : dateDisplayValue(props.dreamTargetDate)}</Text><Text style={styles.dateCalendarIcon}>▣</Text></Pressable>{props.dreamTargetDate !== '' && <Pressable accessibilityLabel="清除預計達成日期" style={styles.dateClearButton} onPress={() => props.onSetTargetDate('')}><Text style={styles.dateClearText}>清除</Text></Pressable>}</View><Text style={styles.dateHint}>未選擇日期時，將依每月投入金額估算達成時間。</Text>{showDatePicker && <View style={styles.datePickerPanel}><DateTimePicker display="spinner" locale="zh-TW" minimumDate={startOfToday()} mode="date" onDismiss={() => setShowDatePicker(false)} onValueChange={handleDateChange} value={pendingDate} />{Platform.OS === 'ios' && <View style={styles.datePickerActions}><Pressable style={styles.datePickerCancel} onPress={() => setShowDatePicker(false)}><Text style={styles.datePickerCancelText}>取消</Text></Pressable><Pressable style={styles.datePickerConfirm} onPress={() => { props.onSetTargetDate(dateStorageValue(pendingDate)); setShowDatePicker(false); }}><Text style={styles.datePickerConfirmText}>完成</Text></Pressable></View>}</View>}<Pressable disabled={props.isSaving} style={[styles.modalPrimaryButton, props.isSaving && styles.disabled]} onPress={props.onSaveDream}>{props.isSaving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>建立夢想</Text>}</Pressable><Pressable style={styles.modalCancelButton} onPress={props.onCloseForm}><Text style={styles.modalCancelText}>取消</Text></Pressable></ScrollView></View></View></KeyboardAvoidingView></Modal>;
+  return (
+    <Modal
+      animationType="slide"
+      transparent
+      visible={props.isFormOpen}
+      onRequestClose={props.onCloseForm}
+    >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalKeyboardView}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              keyboardDismissMode="interactive"
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.modalTitle}>新增夢想</Text>
+              <Text style={styles.modalDescription}>
+                加入一張代表夢想的圖片，讓目標更有感。
+              </Text>
+              <Text style={styles.fieldLabel}>夢想圖片</Text>
+              <Pressable
+                accessibilityRole="button"
+                style={styles.imagePicker}
+                onPress={props.onPickImage}
+              >
+                {props.dreamImageUri ? (
+                  <Image
+                    source={{ uri: props.dreamImageUri }}
+                    style={styles.imagePreview}
+                  />
+                ) : (
+                  <View style={styles.imagePlaceholder}>
+                    <Text style={styles.imagePlaceholderIcon}>＋</Text>
+                    <Text style={styles.imagePlaceholderText}>
+                      從相簿選擇圖片
+                    </Text>
+                  </View>
+                )}
+                <View style={styles.imagePickerBadge}>
+                  <Text style={styles.imagePickerBadgeText}>
+                    {props.dreamImageUri ? "更換圖片" : "選擇圖片"}
+                  </Text>
+                </View>
+              </Pressable>
+              <Text style={styles.fieldLabel}>夢想名稱</Text>
+              <TextInput
+                autoFocus={!props.dreamImageUri}
+                returnKeyType="next"
+                placeholder="例如：2027 冰島旅行"
+                placeholderTextColor="#9AA5B4"
+                style={styles.modalInput}
+                value={props.dreamTitle}
+                onChangeText={props.onSetTitle}
+              />
+              <Text style={styles.fieldLabel}>目標金額</Text>
+              <TextInput
+                keyboardType="numeric"
+                returnKeyType="next"
+                placeholder="例如：120,000"
+                placeholderTextColor="#9AA5B4"
+                style={styles.modalInput}
+                value={props.dreamTarget}
+                onChangeText={props.onSetTarget}
+              />
+              <Text style={styles.fieldLabel}>每月分配給這個夢想</Text>
+              <TextInput
+                keyboardType="numeric"
+                returnKeyType="done"
+                placeholder="例如：5,000"
+                placeholderTextColor="#9AA5B4"
+                style={styles.modalInput}
+                value={props.dreamAllocation}
+                onChangeText={props.onSetAllocation}
+              />
+              <Text style={styles.fieldLabel}>預計達成日期（選填）</Text>
+              <View style={styles.dateFieldRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="選擇預計達成日期"
+                  style={styles.dateField}
+                  onPress={openDatePicker}
+                >
+                  <Text
+                    style={
+                      props.dreamTargetDate === ""
+                        ? styles.datePlaceholder
+                        : styles.dateValue
+                    }
+                  >
+                    {props.dreamTargetDate === ""
+                      ? "選擇日期"
+                      : dateDisplayValue(props.dreamTargetDate)}
+                  </Text>
+                  <Text style={styles.dateCalendarIcon}>▣</Text>
+                </Pressable>
+                {props.dreamTargetDate !== "" && (
+                  <Pressable
+                    accessibilityLabel="清除預計達成日期"
+                    style={styles.dateClearButton}
+                    onPress={() => props.onSetTargetDate("")}
+                  >
+                    <Text style={styles.dateClearText}>清除</Text>
+                  </Pressable>
+                )}
+              </View>
+              <Text style={styles.dateHint}>
+                未選擇日期時，將依每月投入金額估算達成時間。
+              </Text>
+              {showDatePicker && (
+                <View style={styles.datePickerPanel}>
+                  <DateTimePicker
+                    display="spinner"
+                    minimumDate={startOfToday()}
+                    mode="date"
+                    onDismiss={() => setShowDatePicker(false)}
+                    onValueChange={handleDateChange}
+                    value={pendingDate}
+                  />
+                  {Platform.OS === "ios" && (
+                    <View style={styles.datePickerActions}>
+                      <Pressable
+                        style={styles.datePickerCancel}
+                        onPress={() => setShowDatePicker(false)}
+                      >
+                        <Text style={styles.datePickerCancelText}>取消</Text>
+                      </Pressable>
+                      <Pressable
+                        style={styles.datePickerConfirm}
+                        onPress={() => {
+                          props.onSetTargetDate(dateStorageValue(pendingDate));
+                          setShowDatePicker(false);
+                        }}
+                      >
+                        <Text style={styles.datePickerConfirmText}>完成</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              )}
+              <Pressable
+                disabled={props.isSaving}
+                style={[
+                  styles.modalPrimaryButton,
+                  props.isSaving && styles.disabled,
+                ]}
+                onPress={props.onSaveDream}
+              >
+                {props.isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.buttonText}>建立夢想</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={styles.modalCancelButton}
+                onPress={props.onCloseForm}
+              >
+                <Text style={styles.modalCancelText}>取消</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
 }
 
 type OnboardingProps = {
-  step: Step; assets: ReadonlyArray<Item>; liabilities: ReadonlyArray<Item>; income: ReadonlyArray<Item>; expenses: ReadonlyArray<Item>; saving: boolean;
-  onUpdate: (kind: EntryKind, id: string, field: 'category' | 'amount', value: string) => void;
-  onAdd: (kind: 'income' | 'expense') => void; onNext: (target: Step, items: ReadonlyArray<Item>) => void; onSave: () => void; onFinish: () => void;
+  step: Step;
+  assets: ReadonlyArray<Item>;
+  liabilities: ReadonlyArray<Item>;
+  income: ReadonlyArray<Item>;
+  expenses: ReadonlyArray<Item>;
+  saving: boolean;
+  onUpdate: (
+    kind: EntryKind,
+    id: string,
+    field: "category" | "amount",
+    value: string,
+  ) => void;
+  onAdd: (kind: "income" | "expense") => void;
+  onNext: (target: Step, items: ReadonlyArray<Item>) => void;
+  onSave: () => void;
+  onFinish: () => void;
 };
 function Onboarding(props: OnboardingProps) {
-  if (props.step === 'welcome') return (
-    <View style={styles.welcome}>
+  if (props.step === "welcome")
+    return (
+      <View style={styles.welcome}>
+        <StatusBar style="dark" />
+        <ImageBackground
+          source={require("./assets/welcome-journey.png")}
+          resizeMode="cover"
+          style={styles.welcomeBackground}
+        >
+          <View style={styles.welcomeCopy}>
+            <Text style={styles.welcomeTitle}>讓夢想</Text>
+            <Text style={styles.welcomeTitle}>有財務力量</Text>
+            <Text style={styles.welcomeDescription}>一步步盤點財務現況，</Text>
+            <Text style={styles.welcomeDescriptionLine}>
+              打造實現夢想的計畫。
+            </Text>
+          </View>
+          <View style={styles.welcomeFooter}>
+            <Pressable
+              accessibilityRole="button"
+              style={styles.welcomeButton}
+              onPress={() => props.onNext("assets", [])}
+            >
+              <Text style={styles.buttonText}>開始盤點我的財務</Text>
+            </Pressable>
+            <Text style={styles.note}>所有資料只保存在本裝置內</Text>
+          </View>
+        </ImageBackground>
+      </View>
+    );
+  const screen = screenFor(props);
+  const progressWidth = (screen.number * 20 + "%") as `${number}%`;
+  const isBalanceSheetStep =
+    props.step === "assets" || props.step === "liabilities";
+  const isCashFlowStep = props.step === "income" || props.step === "expenses";
+  const hasFixedFooter = isBalanceSheetStep || isCashFlowStep;
+  const actionButton = (
+    <Pressable
+      disabled={props.saving}
+      style={[styles.button, props.saving && styles.disabled]}
+      onPress={screen.action}
+    >
+      {props.saving ? (
+        <ActivityIndicator color="#FFFFFF" />
+      ) : (
+        <Text style={styles.buttonText}>{screen.button}</Text>
+      )}
+    </Pressable>
+  );
+  const cashFlowItems = props.step === "income" ? props.income : props.expenses;
+  const cashFlowKind = props.step === "income" ? "income" : "expense";
+  const cashFlowAddButton = isCashFlowStep && cashFlowItems.length < 10 && (
+    <Pressable style={styles.add} onPress={() => props.onAdd(cashFlowKind)}>
+      <Text style={styles.addText}>＋ 新增一個項目</Text>
+    </Pressable>
+  );
+  const fixedFooter =
+    isBalanceSheetStep || isCashFlowStep ? (
+      <>
+        {cashFlowAddButton}
+        <Text style={styles.helper}>
+          暫時沒有的項目可填 0；之後可隨時回來調整。
+        </Text>
+        {actionButton}
+      </>
+    ) : null;
+  if (isCashFlowStep)
+    return (
+      <View style={styles.container}>
+        <StatusBar style="dark" />
+        <View style={styles.cashFlowScreenContent}>
+          <Text style={styles.progress}>步驟 {screen.number} / 5</Text>
+          <View style={styles.track}>
+            <View style={[styles.trackValue, { width: progressWidth }]} />
+          </View>
+          <Text style={styles.title}>{screen.title}</Text>
+          <Text style={styles.description}>{screen.description}</Text>
+          <EntryForm
+            items={screen.items}
+            kind={screen.kind}
+            canAdd={false}
+            onUpdate={props.onUpdate}
+            onAdd={props.onAdd}
+          />
+        </View>
+        <View style={styles.fixedFooter}>{fixedFooter}</View>
+      </View>
+    );
+  return (
+    <View style={styles.container}>
       <StatusBar style="dark" />
-      <ImageBackground
-        source={require('./assets/welcome-journey.png')}
-        resizeMode="cover"
-        style={styles.welcomeBackground}
+      <ScrollView
+        style={styles.onboardingScroll}
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.welcomeCopy}>
-          <Text style={styles.welcomeTitle}>讓夢想</Text>
-          <Text style={styles.welcomeTitle}>有財務力量</Text>
-          <Text style={styles.welcomeDescription}>一步步盤點財務現況，</Text>
-          <Text style={styles.welcomeDescriptionLine}>打造實現夢想的計畫。</Text>
+        <Text style={styles.progress}>步驟 {screen.number} / 5</Text>
+        <View style={styles.track}>
+          <View style={[styles.trackValue, { width: progressWidth }]} />
         </View>
-        <View style={styles.welcomeFooter}>
-          <Pressable
-            accessibilityRole="button"
-            style={styles.welcomeButton}
-            onPress={() => props.onNext('assets', [])}
-          >
-            <Text style={styles.buttonText}>開始盤點我的財務</Text>
-          </Pressable>
-          <Text style={styles.note}>所有資料只保存在本裝置內</Text>
-        </View>
-      </ImageBackground>
+        <Text style={styles.title}>{screen.title}</Text>
+        <Text style={styles.description}>{screen.description}</Text>
+        {props.step === "summary" ? (
+          <Summary
+            assets={props.assets}
+            liabilities={props.liabilities}
+            income={props.income}
+            expenses={props.expenses}
+          />
+        ) : (
+          <EntryForm
+            items={screen.items}
+            kind={screen.kind}
+            canAdd={props.step === "expenses"}
+            onUpdate={props.onUpdate}
+            onAdd={props.onAdd}
+          />
+        )}
+        {!hasFixedFooter && actionButton}
+      </ScrollView>
+      {fixedFooter !== null && (
+        <View style={styles.fixedFooter}>{fixedFooter}</View>
+      )}
     </View>
   );
-  const screen = screenFor(props);
-  const progressWidth = (screen.number * 20 + '%') as `${number}%`;
-  const isBalanceSheetStep = props.step === 'assets' || props.step === 'liabilities';
-  const isCashFlowStep = props.step === 'income' || props.step === 'expenses';
-  const hasFixedFooter = isBalanceSheetStep || isCashFlowStep;
-  const actionButton = <Pressable disabled={props.saving} style={[styles.button, props.saving && styles.disabled]} onPress={screen.action}>{props.saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.buttonText}>{screen.button}</Text>}</Pressable>;
-  const cashFlowItems = props.step === 'income' ? props.income : props.expenses;
-  const cashFlowKind = props.step === 'income' ? 'income' : 'expense';
-  const cashFlowAddButton = isCashFlowStep && cashFlowItems.length < 10 && <Pressable style={styles.add} onPress={() => props.onAdd(cashFlowKind)}><Text style={styles.addText}>＋ 新增一個項目</Text></Pressable>;
-  const fixedFooter = isBalanceSheetStep || isCashFlowStep ? <>{cashFlowAddButton}<Text style={styles.helper}>暫時沒有的項目可填 0；之後可隨時回來調整。</Text>{actionButton}</> : null;
-  if (isCashFlowStep) return <View style={styles.container}><StatusBar style="dark" /><View style={styles.cashFlowScreenContent}><Text style={styles.progress}>步驟 {screen.number} / 5</Text><View style={styles.track}><View style={[styles.trackValue, { width: progressWidth }]} /></View><Text style={styles.title}>{screen.title}</Text><Text style={styles.description}>{screen.description}</Text><EntryForm items={screen.items} kind={screen.kind} canAdd={false} onUpdate={props.onUpdate} onAdd={props.onAdd} /></View><View style={styles.fixedFooter}>{fixedFooter}</View></View>;
-  return <View style={styles.container}><StatusBar style="dark" /><ScrollView style={styles.onboardingScroll} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled"><Text style={styles.progress}>步驟 {screen.number} / 5</Text><View style={styles.track}><View style={[styles.trackValue, { width: progressWidth }]} /></View><Text style={styles.title}>{screen.title}</Text><Text style={styles.description}>{screen.description}</Text>{props.step === 'summary' ? <Summary assets={props.assets} liabilities={props.liabilities} income={props.income} expenses={props.expenses} /> : <EntryForm items={screen.items} kind={screen.kind} canAdd={props.step === 'expenses'} onUpdate={props.onUpdate} onAdd={props.onAdd} />}{!hasFixedFooter && actionButton}</ScrollView>{fixedFooter !== null && <View style={styles.fixedFooter}>{fixedFooter}</View>}</View>;
 }
-function screenFor(props: OnboardingProps): { number: number; title: string; description: string; items: ReadonlyArray<Item>; kind: EntryKind; button: string; action: () => void } {
-  if (props.step === 'assets') return { number: 1, title: '盤點我的資產', description: '列出你擁有的資產，幫助你掌握財務全貌。', items: props.assets, kind: 'asset', button: '下一步', action: () => props.onNext('liabilities', props.assets) };
-  if (props.step === 'liabilities') return { number: 2, title: '盤點我的負債', description: '了解負債狀況，才能更有規劃地走向未來。', items: props.liabilities, kind: 'liability', button: '下一步', action: () => props.onNext('income', props.liabilities) };
-  if (props.step === 'income') return { number: 3, title: '我的每月固定收入', description: '記錄每月穩定的收入來源與金額。', items: props.income, kind: 'income', button: '下一步', action: () => props.onNext('expenses', props.income) };
-  if (props.step === 'expenses') return { number: 4, title: '我的每月固定支出', description: '記錄每月固定支出，掌握真正可運用的資源。', items: props.expenses, kind: 'expense', button: '查看財務摘要', action: props.onSave };
-  return { number: 5, title: '你的財務摘要', description: '完成盤點！這是你目前的財務狀況。', items: [], kind: 'asset', button: '開始我的財務計畫', action: props.onFinish };
+function screenFor(props: OnboardingProps): {
+  number: number;
+  title: string;
+  description: string;
+  items: ReadonlyArray<Item>;
+  kind: EntryKind;
+  button: string;
+  action: () => void;
+} {
+  if (props.step === "assets")
+    return {
+      number: 1,
+      title: "盤點我的資產",
+      description: "列出你擁有的資產，幫助你掌握財務全貌。",
+      items: props.assets,
+      kind: "asset",
+      button: "下一步",
+      action: () => props.onNext("liabilities", props.assets),
+    };
+  if (props.step === "liabilities")
+    return {
+      number: 2,
+      title: "盤點我的負債",
+      description: "了解負債狀況，才能更有規劃地走向未來。",
+      items: props.liabilities,
+      kind: "liability",
+      button: "下一步",
+      action: () => props.onNext("income", props.liabilities),
+    };
+  if (props.step === "income")
+    return {
+      number: 3,
+      title: "我的每月固定收入",
+      description: "記錄每月穩定的收入來源與金額。",
+      items: props.income,
+      kind: "income",
+      button: "下一步",
+      action: () => props.onNext("expenses", props.income),
+    };
+  if (props.step === "expenses")
+    return {
+      number: 4,
+      title: "我的每月固定支出",
+      description: "記錄每月固定支出，掌握真正可運用的資源。",
+      items: props.expenses,
+      kind: "expense",
+      button: "查看財務摘要",
+      action: props.onSave,
+    };
+  return {
+    number: 5,
+    title: "你的財務摘要",
+    description: "完成盤點！這是你目前的財務狀況。",
+    items: [],
+    kind: "asset",
+    button: "開始我的財務計畫",
+    action: props.onFinish,
+  };
 }
-function EntryForm({ items, kind, canAdd, onUpdate, onAdd }: { items: ReadonlyArray<Item>; kind: EntryKind; canAdd: boolean; onUpdate: OnboardingProps['onUpdate']; onAdd: OnboardingProps['onAdd'] }) {
-  const totalLabel = kind === 'asset' ? '資產總計' : kind === 'liability' ? '負債總計' : kind === 'income' ? '每月固定收入總計' : kind === 'expense' ? '每月固定支出總計' : null;
-  const isCashFlow = kind === 'income' || kind === 'expense';
+function EntryForm({
+  items,
+  kind,
+  canAdd,
+  onUpdate,
+  onAdd,
+}: {
+  items: ReadonlyArray<Item>;
+  kind: EntryKind;
+  canAdd: boolean;
+  onUpdate: OnboardingProps["onUpdate"];
+  onAdd: OnboardingProps["onAdd"];
+}) {
+  const totalLabel =
+    kind === "asset"
+      ? "資產總計"
+      : kind === "liability"
+        ? "負債總計"
+        : kind === "income"
+          ? "每月固定收入總計"
+          : kind === "expense"
+            ? "每月固定支出總計"
+            : null;
+  const isCashFlow = kind === "income" || kind === "expense";
   const canAddMore = !isCashFlow || items.length < 10;
-  const totalCard = totalLabel !== null && <View style={styles.entryTotal}><Text style={styles.entryTotalLabel}>{totalLabel}</Text><Text accessibilityLiveRegion="polite" style={styles.entryTotalValue}>{money(total(items))}</Text></View>;
-  const entryRows = items.map((item) => <View key={item.id} style={styles.entry}><TextInput value={item.category} style={styles.category} placeholder="收入／支出分類" placeholderTextColor="#9AA5B4" onChangeText={(value) => onUpdate(kind, item.id, 'category', value)} /><TextInput value={item.amount} style={styles.amount} placeholder="金額（NT$）" placeholderTextColor="#9AA5B4" keyboardType="numeric" onChangeText={(value) => onUpdate(kind, item.id, 'amount', value)} /></View>);
-  const addButton = canAdd && canAddMore && <Pressable style={styles.add} onPress={() => onAdd(kind === 'income' ? 'income' : 'expense')}><Text style={styles.addText}>＋ 新增一個項目</Text></Pressable>;
-  if (isCashFlow) return <View style={[styles.form, styles.cashFlowForm]}>{totalCard}<View style={styles.cashFlowFlowBlock}><ScrollView nestedScrollEnabled style={styles.cashFlowFlowItems} contentContainerStyle={styles.cashFlowItemsContent} keyboardShouldPersistTaps="handled">{entryRows}</ScrollView>{addButton}<Text style={styles.itemLimit}>最多可新增 10 個{kind === 'income' ? '收入' : '支出'}項目（目前 {items.length} 個）</Text></View></View>;
-  return <View style={styles.form}>{totalCard}{entryRows}{addButton}</View>;
+  const totalCard = totalLabel !== null && (
+    <View style={styles.entryTotal}>
+      <Text style={styles.entryTotalLabel}>{totalLabel}</Text>
+      <Text accessibilityLiveRegion="polite" style={styles.entryTotalValue}>
+        {money(total(items))}
+      </Text>
+    </View>
+  );
+  const entryRows = items.map((item) => (
+    <View key={item.id} style={styles.entry}>
+      <TextInput
+        value={item.category}
+        style={styles.category}
+        placeholder="收入／支出分類"
+        placeholderTextColor="#9AA5B4"
+        onChangeText={(value) => onUpdate(kind, item.id, "category", value)}
+      />
+      <TextInput
+        value={item.amount}
+        style={styles.amount}
+        placeholder="金額（NT$）"
+        placeholderTextColor="#9AA5B4"
+        keyboardType="numeric"
+        onChangeText={(value) => onUpdate(kind, item.id, "amount", value)}
+      />
+    </View>
+  ));
+  const addButton = canAdd && canAddMore && (
+    <Pressable
+      style={styles.add}
+      onPress={() => onAdd(kind === "income" ? "income" : "expense")}
+    >
+      <Text style={styles.addText}>＋ 新增一個項目</Text>
+    </Pressable>
+  );
+  if (isCashFlow)
+    return (
+      <View style={[styles.form, styles.cashFlowForm]}>
+        {totalCard}
+        <View style={styles.cashFlowFlowBlock}>
+          <ScrollView
+            nestedScrollEnabled
+            style={styles.cashFlowFlowItems}
+            contentContainerStyle={styles.cashFlowItemsContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {entryRows}
+          </ScrollView>
+          {addButton}
+          <Text style={styles.itemLimit}>
+            最多可新增 10 個{kind === "income" ? "收入" : "支出"}項目（目前{" "}
+            {items.length} 個）
+          </Text>
+        </View>
+      </View>
+    );
+  return (
+    <View style={styles.form}>
+      {totalCard}
+      {entryRows}
+      {addButton}
+    </View>
+  );
 }
-function Summary({ assets, liabilities, income, expenses }: Pick<OnboardingProps, 'assets' | 'liabilities' | 'income' | 'expenses'>) {
-  const assetTotal = total(assets); const liabilityTotal = total(liabilities); const incomeTotal = total(income); const expenseTotal = total(expenses);
-  return <View style={styles.summary}><View style={styles.net}><Text style={styles.netLabel}>淨資產</Text><Text style={styles.netValue}>{money(assetTotal - liabilityTotal)}</Text></View><Row label="資產總額" value={assetTotal} /><Row label="負債總額" value={liabilityTotal} /><Row label="每月固定收入" value={incomeTotal} /><Row label="每月固定支出" value={expenseTotal} /><Row label="每月結餘" value={incomeTotal - expenseTotal} highlight /></View>;
+function Summary({
+  assets,
+  liabilities,
+  income,
+  expenses,
+}: Pick<OnboardingProps, "assets" | "liabilities" | "income" | "expenses">) {
+  const assetTotal = total(assets);
+  const liabilityTotal = total(liabilities);
+  const incomeTotal = total(income);
+  const expenseTotal = total(expenses);
+  return (
+    <View style={styles.summary}>
+      <View style={styles.net}>
+        <Text style={styles.netLabel}>淨資產</Text>
+        <Text style={styles.netValue}>
+          {money(assetTotal - liabilityTotal)}
+        </Text>
+      </View>
+      <Row label="資產總額" value={assetTotal} />
+      <Row label="負債總額" value={liabilityTotal} />
+      <Row label="每月固定收入" value={incomeTotal} />
+      <Row label="每月固定支出" value={expenseTotal} />
+      <Row label="每月結餘" value={incomeTotal - expenseTotal} highlight />
+    </View>
+  );
 }
-function Row({ label, value, highlight = false }: { label: string; value: number; highlight?: boolean }) { return <View style={styles.row}><Text style={[styles.rowText, highlight && styles.highlight]}>{label}</Text><Text style={[styles.rowValue, highlight && styles.highlight]}>{money(value)}</Text></View>; }
+function Row({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <View style={styles.row}>
+      <Text style={[styles.rowText, highlight && styles.highlight]}>
+        {label}
+      </Text>
+      <Text style={[styles.rowValue, highlight && styles.highlight]}>
+        {money(value)}
+      </Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FCFAF5' }, center: { alignItems: 'center', backgroundColor: '#FCFAF5', flex: 1, justifyContent: 'center' }, content: { flex: 1, padding: 24, paddingTop: 34 }, title: { color: '#132442', fontSize: 29, fontWeight: '700', marginTop: 24 }, description: { color: '#617085', fontSize: 15, lineHeight: 23, marginTop: 10 }, mainCard: { backgroundColor: '#087A50', borderRadius: 18, marginTop: 20, padding: 22 }, mainCardText: { color: '#FFFFFF', fontSize: 22, fontWeight: '700' }, tabBar: { backgroundColor: '#FFFFFF', borderTopColor: '#EAE6DE', borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', paddingBottom: 10, paddingTop: 8 }, tab: { alignItems: 'center', flex: 1 }, icon: { color: '#718096', fontSize: 18 }, tabText: { color: '#718096', fontSize: 12, marginTop: 3 }, active: { color: '#087A50', fontWeight: '700' },
-  welcome: { backgroundColor: '#FBF8F0', flex: 1 }, welcomeBackground: { flex: 1, justifyContent: 'space-between' }, welcomeCopy: { paddingHorizontal: 28, paddingTop: 72 }, welcomeTitle: { color: '#102548', fontSize: 38, fontWeight: '800', letterSpacing: 0.2, lineHeight: 48 }, welcomeDescription: { color: '#33445B', fontSize: 17, lineHeight: 27, marginTop: 22 }, welcomeDescriptionLine: { color: '#33445B', fontSize: 17, lineHeight: 27 }, welcomeFooter: { paddingBottom: 24, paddingHorizontal: 20 }, welcomeButton: { alignItems: 'center', backgroundColor: '#075B35', borderRadius: 12, justifyContent: 'center', minHeight: 56, shadowColor: '#0A3324', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.16, shadowRadius: 9 }, note: { color: '#FFFFFF', fontSize: 13, marginTop: 16, textAlign: 'center' },
-  onboardingScroll: { flex: 1 }, scroll: { flexGrow: 1, padding: 24, paddingBottom: 24, paddingTop: 34 }, cashFlowScreenContent: { flex: 1, paddingBottom: 10, paddingHorizontal: 24, paddingTop: 34 }, progress: { color: '#718096', fontSize: 13, marginTop: 12 }, track: { backgroundColor: '#E5E9E6', borderRadius: 99, height: 6, marginTop: 9, overflow: 'hidden' }, trackValue: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' }, form: { marginTop: 28 }, cashFlowForm: { flex: 1, minHeight: 0 }, cashFlowFlowBlock: { flex: 1, minHeight: 0, overflow: 'hidden' }, cashFlowFlowItems: { flex: 1 }, cashFlowItemsContent: { paddingBottom: 2 }, entry: { flexDirection: 'row', gap: 8, marginBottom: 12 }, category: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', flex: 1.25, minHeight: 52, paddingHorizontal: 12 }, amount: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', flex: 1, minHeight: 52, paddingHorizontal: 12 }, entryTotal: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 12, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 16, paddingVertical: 17 }, entryTotalLabel: { color: '#132442', fontSize: 16, fontWeight: '700' }, entryTotalValue: { color: '#075B35', fontSize: 19, fontWeight: '800' }, add: { alignItems: 'center', borderColor: '#8ABFA7', borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 48 }, addText: { color: '#087A50', fontWeight: '700' }, itemLimit: { color: '#718096', fontSize: 12, marginTop: 10, textAlign: 'right' }, helper: { color: '#718096', fontSize: 13, lineHeight: 19, marginTop: 12 },
-  summary: { backgroundColor: '#FFFFFF', borderRadius: 16, marginTop: 28, overflow: 'hidden' }, net: { backgroundColor: '#EAF6EF', padding: 18 }, netLabel: { color: '#176342', fontSize: 14 }, netValue: { color: '#07583A', fontSize: 28, fontWeight: '800', marginTop: 6 }, row: { borderTopColor: '#E7EAE7', borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', padding: 16 }, rowText: { color: '#526277', fontSize: 15 }, rowValue: { color: '#132442', fontSize: 15, fontWeight: '700' }, highlight: { color: '#087A50', fontWeight: '800' },
-  dreamsContent: { padding: 24, paddingBottom: 28, paddingTop: 58 }, dreamsTopBar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, dreamsTitle: { color: '#132442', fontSize: 30, fontWeight: '800' }, completedListButton: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 16, flexDirection: 'row', minHeight: 36, paddingHorizontal: 11 }, completedListButtonText: { color: '#087A50', fontSize: 11, fontWeight: '800' }, completedListBadge: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 10, height: 20, justifyContent: 'center', marginLeft: 6, minWidth: 20, paddingHorizontal: 5 }, completedListBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '900' }, availableCard: { backgroundColor: '#087A50', borderRadius: 18, marginTop: 18, padding: 18 }, availableLabel: { color: '#D9F3E5', fontSize: 14 }, availableValue: { color: '#FFFFFF', fontSize: 30, fontWeight: '800', marginTop: 5 }, availableDetail: { color: '#D9F3E5', fontSize: 13, marginTop: 7 }, dreamsSectionHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 24, marginBottom: 10 }, dreamsSectionTitle: { color: '#132442', fontSize: 17, fontWeight: '700' }, dreamCount: { color: '#718096', fontSize: 13 }, emptyDreams: { backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 16, borderWidth: 1, padding: 20 }, emptyDreamsTitle: { color: '#132442', fontSize: 16, fontWeight: '700' }, emptyDreamsText: { color: '#617085', fontSize: 14, lineHeight: 21, marginTop: 8 }, createDreamButton: { alignItems: 'center', borderColor: '#2B966A', borderRadius: 13, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', marginTop: 14, minHeight: 52 }, createDreamButtonText: { color: '#087A50', fontSize: 15, fontWeight: '700' }, dreamCard: { backgroundColor: '#FFFFFF', borderRadius: 16, flexDirection: 'row', marginBottom: 10, padding: 14 }, dreamIcon: { alignItems: 'center', backgroundColor: '#0B5F54', borderRadius: 13, height: 62, justifyContent: 'center', width: 62 }, dreamIconText: { color: '#FFFFFF', fontSize: 24 }, dreamImage: { borderRadius: 13, height: 62, width: 62 }, dreamMeta: { flex: 1, marginLeft: 12 }, dreamTitleLine: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, dreamName: { color: '#132442', flex: 1, fontSize: 16, fontWeight: '700', marginRight: 8 }, dreamPercent: { color: '#087A50', fontSize: 14, fontWeight: '800' }, dreamDetail: { color: '#617085', fontSize: 12, marginTop: 4 }, dreamProgressTrack: { backgroundColor: '#E6ECE7', borderRadius: 99, height: 7, marginTop: 8, overflow: 'hidden' }, dreamProgressFill: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' }, dreamTiming: { color: '#617085', fontSize: 11, marginTop: 7 }, completedListSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 26, borderTopRightRadius: 26, maxHeight: '88%', minHeight: '54%', overflow: 'hidden' }, completedListHeader: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', padding: 24, paddingBottom: 16 }, completedListSubtitle: { color: '#617085', fontSize: 13, marginTop: 5 }, completedListClose: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 }, completedListCloseText: { color: '#526277', fontSize: 25, lineHeight: 27 }, completedListContent: { padding: 24, paddingTop: 4 }, modalKeyboardView: { flex: 1 }, modalOverlay: { backgroundColor: 'rgba(19, 36, 66, 0.35)', flex: 1, justifyContent: 'flex-end' }, modalSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '92%', overflow: 'hidden' }, modalScrollContent: { padding: 24, paddingBottom: 34 }, modalTitle: { color: '#132442', fontSize: 24, fontWeight: '800' }, modalDescription: { color: '#617085', fontSize: 14, lineHeight: 21, marginTop: 7 }, fieldLabel: { color: '#2F4058', fontSize: 14, fontWeight: '700', marginTop: 20, marginBottom: 8 }, imagePicker: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 14, borderWidth: 1, height: 150, overflow: 'hidden', position: 'relative' }, imagePreview: { height: '100%', width: '100%' }, imagePlaceholder: { alignItems: 'center', flex: 1, justifyContent: 'center' }, imagePlaceholderIcon: { color: '#087A50', fontSize: 28, fontWeight: '500' }, imagePlaceholderText: { color: '#617085', fontSize: 13, marginTop: 5 }, imagePickerBadge: { backgroundColor: 'rgba(7, 91, 53, 0.9)', borderRadius: 9, bottom: 10, paddingHorizontal: 11, paddingVertical: 7, position: 'absolute', right: 10 }, imagePickerBadgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' }, modalInput: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, color: '#132442', fontSize: 16, minHeight: 52, paddingHorizontal: 14 }, modalPrimaryButton: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 14, justifyContent: 'center', marginTop: 24, minHeight: 54 }, modalCancelButton: { alignItems: 'center', justifyContent: 'center', minHeight: 46, marginTop: 6 }, modalCancelText: { color: '#526277', fontSize: 15, fontWeight: '700' },
+  container: { flex: 1, backgroundColor: "#FCFAF5" },
+  center: {
+    alignItems: "center",
+    backgroundColor: "#FCFAF5",
+    flex: 1,
+    justifyContent: "center",
+  },
+  content: { flex: 1, padding: 24, paddingTop: 34 },
+  title: { color: "#132442", fontSize: 29, fontWeight: "700", marginTop: 24 },
+  description: {
+    color: "#617085",
+    fontSize: 15,
+    lineHeight: 23,
+    marginTop: 10,
+  },
+  mainCard: {
+    backgroundColor: "#087A50",
+    borderRadius: 18,
+    marginTop: 20,
+    padding: 22,
+  },
+  mainCardText: { color: "#FFFFFF", fontSize: 22, fontWeight: "700" },
+  tabBar: {
+    backgroundColor: "#FFFFFF",
+    borderTopColor: "#EAE6DE",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    paddingBottom: 10,
+    paddingTop: 8,
+  },
+  tab: { alignItems: "center", flex: 1 },
+  icon: { color: "#718096", fontSize: 18 },
+  tabText: { color: "#718096", fontSize: 12, marginTop: 3 },
+  active: { color: "#087A50", fontWeight: "700" },
+  welcome: { backgroundColor: "#FBF8F0", flex: 1 },
+  welcomeBackground: { flex: 1, justifyContent: "space-between" },
+  welcomeCopy: { paddingHorizontal: 28, paddingTop: 72 },
+  welcomeTitle: {
+    color: "#102548",
+    fontSize: 38,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+    lineHeight: 48,
+  },
+  welcomeDescription: {
+    color: "#33445B",
+    fontSize: 17,
+    lineHeight: 27,
+    marginTop: 22,
+  },
+  welcomeDescriptionLine: { color: "#33445B", fontSize: 17, lineHeight: 27 },
+  welcomeFooter: { paddingBottom: 24, paddingHorizontal: 20 },
+  welcomeButton: {
+    alignItems: "center",
+    backgroundColor: "#075B35",
+    borderRadius: 12,
+    justifyContent: "center",
+    minHeight: 56,
+    shadowColor: "#0A3324",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.16,
+    shadowRadius: 9,
+  },
+  note: { color: "#FFFFFF", fontSize: 13, marginTop: 16, textAlign: "center" },
+  onboardingScroll: { flex: 1 },
+  scroll: { flexGrow: 1, padding: 24, paddingBottom: 24, paddingTop: 34 },
+  cashFlowScreenContent: {
+    flex: 1,
+    paddingBottom: 10,
+    paddingHorizontal: 24,
+    paddingTop: 34,
+  },
+  progress: { color: "#718096", fontSize: 13, marginTop: 12 },
+  track: {
+    backgroundColor: "#E5E9E6",
+    borderRadius: 99,
+    height: 6,
+    marginTop: 9,
+    overflow: "hidden",
+  },
+  trackValue: { backgroundColor: "#087A50", borderRadius: 99, height: "100%" },
+  form: { marginTop: 28 },
+  cashFlowForm: { flex: 1, minHeight: 0 },
+  cashFlowFlowBlock: { flex: 1, minHeight: 0, overflow: "hidden" },
+  cashFlowFlowItems: { flex: 1 },
+  cashFlowItemsContent: { paddingBottom: 2 },
+  entry: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  category: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    color: "#132442",
+    flex: 1.25,
+    minHeight: 52,
+    paddingHorizontal: 12,
+  },
+  amount: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    color: "#132442",
+    flex: 1,
+    minHeight: 52,
+    paddingHorizontal: 12,
+  },
+  entryTotal: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderColor: "#E2E6E3",
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 17,
+  },
+  entryTotalLabel: { color: "#132442", fontSize: 16, fontWeight: "700" },
+  entryTotalValue: { color: "#075B35", fontSize: 19, fontWeight: "800" },
+  add: {
+    alignItems: "center",
+    borderColor: "#8ABFA7",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  addText: { color: "#087A50", fontWeight: "700" },
+  itemLimit: {
+    color: "#718096",
+    fontSize: 12,
+    marginTop: 10,
+    textAlign: "right",
+  },
+  helper: { color: "#718096", fontSize: 13, lineHeight: 19, marginTop: 12 },
+  summary: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginTop: 28,
+    overflow: "hidden",
+  },
+  net: { backgroundColor: "#EAF6EF", padding: 18 },
+  netLabel: { color: "#176342", fontSize: 14 },
+  netValue: { color: "#07583A", fontSize: 28, fontWeight: "800", marginTop: 6 },
+  row: {
+    borderTopColor: "#E7EAE7",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 16,
+  },
+  rowText: { color: "#526277", fontSize: 15 },
+  rowValue: { color: "#132442", fontSize: 15, fontWeight: "700" },
+  highlight: { color: "#087A50", fontWeight: "800" },
+  dreamsContent: { padding: 24, paddingBottom: 28, paddingTop: 58 },
+  dreamsTopBar: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  dreamsTitle: { color: "#132442", fontSize: 30, fontWeight: "800" },
+  completedListButton: {
+    alignItems: "center",
+    backgroundColor: "#F0EDE6",
+    borderRadius: 16,
+    flexDirection: "row",
+    minHeight: 36,
+    paddingHorizontal: 11,
+  },
+  completedListButtonText: {
+    color: "#087A50",
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  completedListBadge: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 10,
+    height: 20,
+    justifyContent: "center",
+    marginLeft: 6,
+    minWidth: 20,
+    paddingHorizontal: 5,
+  },
+  completedListBadgeText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
+  availableCard: {
+    backgroundColor: "#087A50",
+    borderRadius: 18,
+    marginTop: 18,
+    padding: 18,
+  },
+  availableLabel: { color: "#D9F3E5", fontSize: 14 },
+  availableValue: {
+    color: "#FFFFFF",
+    fontSize: 30,
+    fontWeight: "800",
+    marginTop: 5,
+  },
+  availableDetail: { color: "#D9F3E5", fontSize: 13, marginTop: 7 },
+  dreamsSectionHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 24,
+    marginBottom: 10,
+  },
+  dreamsSectionTitle: { color: "#132442", fontSize: 17, fontWeight: "700" },
+  dreamCount: { color: "#718096", fontSize: 13 },
+  emptyDreams: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#E2E6E3",
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+  },
+  emptyDreamsTitle: { color: "#132442", fontSize: 16, fontWeight: "700" },
+  emptyDreamsText: {
+    color: "#617085",
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 8,
+  },
+  createDreamButton: {
+    alignItems: "center",
+    borderColor: "#2B966A",
+    borderRadius: 13,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    justifyContent: "center",
+    marginTop: 14,
+    minHeight: 52,
+  },
+  createDreamButtonText: { color: "#087A50", fontSize: 15, fontWeight: "700" },
+  dreamCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    flexDirection: "row",
+    marginBottom: 10,
+    padding: 14,
+  },
+  dreamIcon: {
+    alignItems: "center",
+    backgroundColor: "#0B5F54",
+    borderRadius: 13,
+    height: 62,
+    justifyContent: "center",
+    width: 62,
+  },
+  dreamIconText: { color: "#FFFFFF", fontSize: 24 },
+  dreamImage: { borderRadius: 13, height: 62, width: 62 },
+  dreamMeta: { flex: 1, marginLeft: 12 },
+  dreamTitleLine: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  dreamName: {
+    color: "#132442",
+    flex: 1,
+    fontSize: 16,
+    fontWeight: "700",
+    marginRight: 8,
+  },
+  dreamPercent: { color: "#087A50", fontSize: 14, fontWeight: "800" },
+  dreamDetail: { color: "#617085", fontSize: 12, marginTop: 4 },
+  dreamProgressTrack: {
+    backgroundColor: "#E6ECE7",
+    borderRadius: 99,
+    height: 7,
+    marginTop: 8,
+    overflow: "hidden",
+  },
+  dreamProgressFill: {
+    backgroundColor: "#087A50",
+    borderRadius: 99,
+    height: "100%",
+  },
+  dreamTiming: { color: "#617085", fontSize: 11, marginTop: 7 },
+  completedListSheet: {
+    backgroundColor: "#FCFAF5",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    maxHeight: "88%",
+    minHeight: "54%",
+    overflow: "hidden",
+  },
+  completedListHeader: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 24,
+    paddingBottom: 16,
+  },
+  completedListSubtitle: { color: "#617085", fontSize: 13, marginTop: 5 },
+  completedListClose: {
+    alignItems: "center",
+    backgroundColor: "#F0EDE6",
+    borderRadius: 18,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  completedListCloseText: { color: "#526277", fontSize: 25, lineHeight: 27 },
+  completedListContent: { padding: 24, paddingTop: 4 },
+  modalKeyboardView: { flex: 1 },
+  modalOverlay: {
+    backgroundColor: "rgba(19, 36, 66, 0.35)",
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: "#FCFAF5",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "92%",
+    overflow: "hidden",
+  },
+  modalScrollContent: { padding: 24, paddingBottom: 34 },
+  modalTitle: { color: "#132442", fontSize: 24, fontWeight: "800" },
+  modalDescription: {
+    color: "#617085",
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 7,
+  },
+  fieldLabel: {
+    color: "#2F4058",
+    fontSize: 14,
+    fontWeight: "700",
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  imagePicker: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 14,
+    borderWidth: 1,
+    height: 150,
+    overflow: "hidden",
+    position: "relative",
+  },
+  imagePreview: { height: "100%", width: "100%" },
+  imagePlaceholder: { alignItems: "center", flex: 1, justifyContent: "center" },
+  imagePlaceholderIcon: { color: "#087A50", fontSize: 28, fontWeight: "500" },
+  imagePlaceholderText: { color: "#617085", fontSize: 13, marginTop: 5 },
+  imagePickerBadge: {
+    backgroundColor: "rgba(7, 91, 53, 0.9)",
+    borderRadius: 9,
+    bottom: 10,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    position: "absolute",
+    right: 10,
+  },
+  imagePickerBadgeText: { color: "#FFFFFF", fontSize: 12, fontWeight: "700" },
+  modalInput: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    color: "#132442",
+    fontSize: 16,
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  modalPrimaryButton: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 14,
+    justifyContent: "center",
+    marginTop: 24,
+    minHeight: 54,
+  },
+  modalCancelButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 46,
+    marginTop: 6,
+  },
+  modalCancelText: { color: "#526277", fontSize: 15, fontWeight: "700" },
   dreamCardPressed: { opacity: 0.72, transform: [{ scale: 0.99 }] },
-  dateHint: { color: '#718096', fontSize: 11, marginTop: 7 },
-  dateFieldRow: { alignItems: 'center', flexDirection: 'row', gap: 9 },
-  dateField: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, flex: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 52, paddingHorizontal: 14 },
-  datePlaceholder: { color: '#9AA5B4', fontSize: 16 },
-  dateValue: { color: '#132442', fontSize: 16 },
-  dateCalendarIcon: { color: '#087A50', fontSize: 18 },
-  dateClearButton: { alignItems: 'center', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, justifyContent: 'center', minHeight: 52, paddingHorizontal: 13 },
-  dateClearText: { color: '#617085', fontSize: 13, fontWeight: '700' },
-  datePickerPanel: { backgroundColor: '#FFFFFF', borderColor: '#E1E6E2', borderRadius: 14, borderWidth: 1, marginTop: 10, overflow: 'hidden' },
-  datePickerActions: { borderTopColor: '#E7EAE7', borderTopWidth: StyleSheet.hairlineWidth, flexDirection: 'row', gap: 10, padding: 10 },
-  datePickerCancel: { alignItems: 'center', borderColor: '#DDE3E8', borderRadius: 10, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 42 },
-  datePickerCancelText: { color: '#617085', fontSize: 14, fontWeight: '700' },
-  datePickerConfirm: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 10, flex: 1, justifyContent: 'center', minHeight: 42 },
-  datePickerConfirmText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  detailSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 26, borderTopRightRadius: 26, maxHeight: '90%', overflow: 'hidden', padding: 24, paddingBottom: 34 },
-  detailImage: { borderRadius: 18, height: 220, width: '100%' },
-  detailImageFallback: { alignItems: 'center', backgroundColor: '#0B5F54', borderRadius: 18, height: 180, justifyContent: 'center', width: '100%' },
-  detailImageFallbackText: { color: '#FFFFFF', fontSize: 52 },
-  detailTitle: { color: '#132442', fontSize: 24, fontWeight: '800', marginTop: 19 },
-  detailDate: { color: '#617085', fontSize: 13, marginTop: 7 },
-  detailAmounts: { backgroundColor: '#FFFFFF', borderRadius: 15, flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, padding: 16 },
-  detailAmountLabel: { color: '#718096', fontSize: 11 },
-  detailAmountValue: { color: '#132442', fontSize: 17, fontWeight: '800', marginTop: 4 },
-  progressEditor: { backgroundColor: '#FFFFFF', borderColor: '#E2E6E3', borderRadius: 15, borderWidth: 1, marginTop: 16, padding: 15 },
-  progressInputRow: { flexDirection: 'row', gap: 9, marginTop: 9 },
-  progressAmountInput: { backgroundColor: '#FCFAF5', borderColor: '#DDE3E8', borderRadius: 11, borderWidth: 1, color: '#132442', flex: 1, fontSize: 16, minHeight: 48, paddingHorizontal: 13 },
-  progressSaveButton: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 11, justifyContent: 'center', minHeight: 48, minWidth: 72, paddingHorizontal: 14 },
-  progressSaveButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
-  progressPreviewHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 },
-  progressPreviewLabel: { color: '#617085', fontSize: 12, fontWeight: '700' },
-  progressPreviewTrack: { backgroundColor: '#E3EAE5', borderRadius: 99, height: 8, marginTop: 8, overflow: 'hidden' },
-  detailProgressHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 21 },
-  detailProgressLabel: { color: '#2F4058', fontSize: 14, fontWeight: '700' },
-  detailProgressPercent: { color: '#087A50', fontSize: 16, fontWeight: '800' },
-  detailProgressTrack: { backgroundColor: '#E3EAE5', borderRadius: 99, height: 11, marginTop: 9, overflow: 'hidden' },
-  detailProgressFill: { backgroundColor: '#087A50', borderRadius: 99, height: '100%' },
-  executedDreamCard: { backgroundColor: '#E7F3EB', borderColor: '#B8D7C2', borderRadius: 16, borderWidth: 1, marginTop: 16, padding: 16 },
-  executedDreamTitle: { color: '#0B5538', fontSize: 16, fontWeight: '800', marginBottom: 5 },
-  executedDreamTime: { color: '#557064', fontSize: 13, fontWeight: '600' },
-  executionCancelledCard: { alignItems: 'center', backgroundColor: '#F8F1E3', borderRadius: 16, marginTop: 16, padding: 16 },
-  executionCancelledText: { color: '#655B46', fontSize: 14, fontWeight: '600', lineHeight: 20, textAlign: 'center' },
-  executionRetryText: { color: '#087A50', fontSize: 14, fontWeight: '800', marginTop: 10 },
-  executionDecision: { backgroundColor: '#F2F8F4', borderColor: '#B8D7C2', borderRadius: 16, borderWidth: 1, marginTop: 16, padding: 16 },
-  executionDecisionDisabled: { backgroundColor: '#F6F6F2', borderColor: '#E2E2DC' },
-  executionDecisionTitle: { color: '#10213C', fontSize: 17, fontWeight: '800' },
-  executionDecisionHint: { color: '#657184', fontSize: 13, lineHeight: 19, marginTop: 6 },
-  executionActions: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  executionConfirmButton: { alignItems: 'center', backgroundColor: '#0B5538', borderRadius: 12, flex: 1, justifyContent: 'center', minHeight: 46 },
-  executionConfirmText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
-  executionCancelButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#C8D0CB', borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 46 },
-  executionCancelText: { color: '#435047', fontSize: 15, fontWeight: '800' },
-  encouragement: { alignItems: 'center', backgroundColor: '#EAF5ED', borderRadius: 15, flexDirection: 'row', marginTop: 16, padding: 14 },
-  encouragementExpired: { backgroundColor: '#FFF1DE' },
+  dateHint: { color: "#718096", fontSize: 11, marginTop: 7 },
+  dateFieldRow: { alignItems: "center", flexDirection: "row", gap: 9 },
+  dateField: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 52,
+    paddingHorizontal: 14,
+  },
+  datePlaceholder: { color: "#9AA5B4", fontSize: 16 },
+  dateValue: { color: "#132442", fontSize: 16 },
+  dateCalendarIcon: { color: "#087A50", fontSize: 18 },
+  dateClearButton: {
+    alignItems: "center",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 52,
+    paddingHorizontal: 13,
+  },
+  dateClearText: { color: "#617085", fontSize: 13, fontWeight: "700" },
+  datePickerPanel: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#E1E6E2",
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 10,
+    overflow: "hidden",
+  },
+  datePickerActions: {
+    borderTopColor: "#E7EAE7",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    gap: 10,
+    padding: 10,
+  },
+  datePickerCancel: {
+    alignItems: "center",
+    borderColor: "#DDE3E8",
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 42,
+  },
+  datePickerCancelText: { color: "#617085", fontSize: 14, fontWeight: "700" },
+  datePickerConfirm: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 10,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 42,
+  },
+  datePickerConfirmText: { color: "#FFFFFF", fontSize: 14, fontWeight: "700" },
+  detailSheet: {
+    backgroundColor: "#FCFAF5",
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    maxHeight: "90%",
+    overflow: "hidden",
+    padding: 24,
+    paddingBottom: 34,
+  },
+  detailImage: { borderRadius: 18, height: 220, width: "100%" },
+  detailImageFallback: {
+    alignItems: "center",
+    backgroundColor: "#0B5F54",
+    borderRadius: 18,
+    height: 180,
+    justifyContent: "center",
+    width: "100%",
+  },
+  detailImageFallbackText: { color: "#FFFFFF", fontSize: 52 },
+  detailTitle: {
+    color: "#132442",
+    fontSize: 24,
+    fontWeight: "800",
+    marginTop: 19,
+  },
+  detailDate: { color: "#617085", fontSize: 13, marginTop: 7 },
+  detailAmounts: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 15,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 18,
+    padding: 16,
+  },
+  detailAmountLabel: { color: "#718096", fontSize: 11 },
+  detailAmountValue: {
+    color: "#132442",
+    fontSize: 17,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  progressEditor: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#E2E6E3",
+    borderRadius: 15,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 15,
+  },
+  progressInputRow: { flexDirection: "row", gap: 9, marginTop: 9 },
+  progressAmountInput: {
+    backgroundColor: "#FCFAF5",
+    borderColor: "#DDE3E8",
+    borderRadius: 11,
+    borderWidth: 1,
+    color: "#132442",
+    flex: 1,
+    fontSize: 16,
+    minHeight: 48,
+    paddingHorizontal: 13,
+  },
+  progressSaveButton: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 11,
+    justifyContent: "center",
+    minHeight: 48,
+    minWidth: 72,
+    paddingHorizontal: 14,
+  },
+  progressSaveButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  progressPreviewHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 16,
+  },
+  progressPreviewLabel: { color: "#617085", fontSize: 12, fontWeight: "700" },
+  progressPreviewTrack: {
+    backgroundColor: "#E3EAE5",
+    borderRadius: 99,
+    height: 8,
+    marginTop: 8,
+    overflow: "hidden",
+  },
+  detailProgressHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 21,
+  },
+  detailProgressLabel: { color: "#2F4058", fontSize: 14, fontWeight: "700" },
+  detailProgressPercent: { color: "#087A50", fontSize: 16, fontWeight: "800" },
+  detailProgressTrack: {
+    backgroundColor: "#E3EAE5",
+    borderRadius: 99,
+    height: 11,
+    marginTop: 9,
+    overflow: "hidden",
+  },
+  detailProgressFill: {
+    backgroundColor: "#087A50",
+    borderRadius: 99,
+    height: "100%",
+  },
+  executedDreamCard: {
+    backgroundColor: "#E7F3EB",
+    borderColor: "#B8D7C2",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 16,
+  },
+  executedDreamTitle: {
+    color: "#0B5538",
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 5,
+  },
+  executedDreamTime: { color: "#557064", fontSize: 13, fontWeight: "600" },
+  executionCancelledCard: {
+    alignItems: "center",
+    backgroundColor: "#F8F1E3",
+    borderRadius: 16,
+    marginTop: 16,
+    padding: 16,
+  },
+  executionCancelledText: {
+    color: "#655B46",
+    fontSize: 14,
+    fontWeight: "600",
+    lineHeight: 20,
+    textAlign: "center",
+  },
+  executionRetryText: {
+    color: "#087A50",
+    fontSize: 14,
+    fontWeight: "800",
+    marginTop: 10,
+  },
+  executionDecision: {
+    backgroundColor: "#F2F8F4",
+    borderColor: "#B8D7C2",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 16,
+  },
+  executionDecisionDisabled: {
+    backgroundColor: "#F6F6F2",
+    borderColor: "#E2E2DC",
+  },
+  executionDecisionTitle: { color: "#10213C", fontSize: 17, fontWeight: "800" },
+  executionDecisionHint: {
+    color: "#657184",
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 6,
+  },
+  executionActions: { flexDirection: "row", gap: 10, marginTop: 14 },
+  executionConfirmButton: {
+    alignItems: "center",
+    backgroundColor: "#0B5538",
+    borderRadius: 12,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 46,
+  },
+  executionConfirmText: { color: "#FFFFFF", fontSize: 15, fontWeight: "800" },
+  executionCancelButton: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderColor: "#C8D0CB",
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 46,
+  },
+  executionCancelText: { color: "#435047", fontSize: 15, fontWeight: "800" },
+  encouragement: {
+    alignItems: "center",
+    backgroundColor: "#EAF5ED",
+    borderRadius: 15,
+    flexDirection: "row",
+    marginTop: 16,
+    padding: 14,
+  },
+  encouragementExpired: { backgroundColor: "#FFF1DE" },
   encouragementIcon: { fontSize: 22, marginRight: 9 },
-  encouragementText: { color: '#265A43', fontSize: 15, fontWeight: '700' },
-  detailCloseButton: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 14, justifyContent: 'center', marginTop: 22, minHeight: 52 },
-  fixedFooter: { backgroundColor: '#FCFAF5', borderTopColor: '#E5E9E6', borderTopWidth: StyleSheet.hairlineWidth, paddingBottom: 16, paddingHorizontal: 24, paddingTop: 12 }, button: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 14, justifyContent: 'center', marginTop: 16, minHeight: 54 }, disabled: { backgroundColor: '#70A992' }, buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-  resetButton: { alignItems: 'center', borderColor: '#C55252', borderRadius: 12, borderWidth: 1, marginTop: 28, minHeight: 50, justifyContent: 'center' }, resetButtonText: { color: '#A53B3B', fontSize: 15, fontWeight: '700' },
+  encouragementText: { color: "#265A43", fontSize: 15, fontWeight: "700" },
+  detailCloseButton: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 14,
+    justifyContent: "center",
+    marginTop: 22,
+    minHeight: 52,
+  },
+  fixedFooter: {
+    backgroundColor: "#FCFAF5",
+    borderTopColor: "#E5E9E6",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 16,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+  },
+  button: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 14,
+    justifyContent: "center",
+    marginTop: 16,
+    minHeight: 54,
+  },
+  disabled: { backgroundColor: "#70A992" },
+  buttonText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
+  resetButton: {
+    alignItems: "center",
+    borderColor: "#C55252",
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 28,
+    minHeight: 50,
+    justifyContent: "center",
+  },
+  resetButtonText: { color: "#A53B3B", fontSize: 15, fontWeight: "700" },
   pageContent: { padding: 24, paddingBottom: 30, paddingTop: 58 },
-  pageHeading: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  pageTitle: { color: '#132442', fontSize: 28, fontWeight: '800' },
-  pageSubtitle: { color: '#617085', fontSize: 13, marginTop: 5 },
-  headerAction: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 18, justifyContent: 'center', minHeight: 36, paddingHorizontal: 13 },
-  headerActionText: { color: '#087A50', fontSize: 13, fontWeight: '700' },
-  balanceCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, flexDirection: 'row', marginTop: 18, padding: 14 },
-  donutWrap: { alignItems: 'center', height: 118, justifyContent: 'center', position: 'relative', width: 118 },
-  donutLabel: { alignItems: 'center', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
-  donutCaption: { color: '#617085', fontSize: 10 },
-  donutValue: { color: '#132442', fontSize: 13, fontWeight: '800', marginTop: 2 },
+  pageHeading: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  pageTitle: { color: "#132442", fontSize: 28, fontWeight: "800" },
+  pageSubtitle: { color: "#617085", fontSize: 13, marginTop: 5 },
+  headerAction: {
+    alignItems: "center",
+    backgroundColor: "#F0EDE6",
+    borderRadius: 18,
+    justifyContent: "center",
+    minHeight: 36,
+    paddingHorizontal: 13,
+  },
+  headerActionText: { color: "#087A50", fontSize: 13, fontWeight: "700" },
+  balanceCard: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    flexDirection: "row",
+    marginTop: 18,
+    padding: 14,
+  },
+  donutWrap: {
+    alignItems: "center",
+    height: 118,
+    justifyContent: "center",
+    position: "relative",
+    width: 118,
+  },
+  donutLabel: {
+    alignItems: "center",
+    bottom: 0,
+    justifyContent: "center",
+    left: 0,
+    position: "absolute",
+    right: 0,
+    top: 0,
+  },
+  donutCaption: { color: "#617085", fontSize: 10 },
+  donutValue: {
+    color: "#132442",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 2,
+  },
   balanceLegend: { flex: 1, marginLeft: 10 },
-  cardTitle: { color: '#132442', fontSize: 14, fontWeight: '700', marginBottom: 7 },
-  legendRow: { alignItems: 'center', flexDirection: 'row', marginTop: 8 },
+  cardTitle: {
+    color: "#132442",
+    fontSize: 14,
+    fontWeight: "700",
+    marginBottom: 7,
+  },
+  legendRow: { alignItems: "center", flexDirection: "row", marginTop: 8 },
   legendDot: { borderRadius: 4, height: 8, marginRight: 7, width: 8 },
-  legendLabel: { color: '#526277', flex: 1, fontSize: 11 },
-  legendValue: { color: '#132442', fontSize: 10, fontWeight: '700' },
-  sectionHeading: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, marginTop: 18 },
-  sectionHeadingText: { color: '#132442', fontSize: 15, fontWeight: '800' },
-  sectionCaption: { color: '#718096', fontSize: 11 },
-  financeList: { backgroundColor: '#FFFFFF', borderRadius: 16, overflow: 'hidden' },
-  financeRow: { alignItems: 'center', borderBottomColor: '#EEEAE2', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', minHeight: 51, paddingHorizontal: 12 },
-  financeRowIcon: { alignItems: 'center', backgroundColor: '#E8F3EB', borderRadius: 9, height: 29, justifyContent: 'center', width: 29 },
-  financeRowIconText: { color: '#087A50', fontSize: 13, fontWeight: '800' },
-  financeRowName: { color: '#273952', flex: 1, fontSize: 13, fontWeight: '600', marginLeft: 10 },
-  financeRowAmount: { fontSize: 13, fontWeight: '800' },
-  financeRowPressed: { backgroundColor: '#F1F6F2' },
-  financeRowChevron: { color: '#8B98A8', fontSize: 19, marginLeft: 8 },
-  systemItemBadge: { color: '#087A50', fontSize: 10, fontWeight: '800', marginHorizontal: 8 },
-  protectedSwipeRow: { backgroundColor: '#FFFFFF' },
-  lockedInput: { backgroundColor: '#F0F2EF', color: '#687589' },
-  dreamSwipeRow: { backgroundColor: '#C74E48', borderRadius: 16, marginBottom: 10, overflow: 'hidden', position: 'relative' },
+  legendLabel: { color: "#526277", flex: 1, fontSize: 11 },
+  legendValue: { color: "#132442", fontSize: 10, fontWeight: "700" },
+  sectionHeading: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+    marginTop: 18,
+  },
+  sectionHeadingText: { color: "#132442", fontSize: 15, fontWeight: "800" },
+  sectionCaption: { color: "#718096", fontSize: 11 },
+  financeList: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+  financeRow: {
+    alignItems: "center",
+    borderBottomColor: "#EEEAE2",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    minHeight: 51,
+    paddingHorizontal: 12,
+  },
+  financeRowIcon: {
+    alignItems: "center",
+    backgroundColor: "#E8F3EB",
+    borderRadius: 9,
+    height: 29,
+    justifyContent: "center",
+    width: 29,
+  },
+  financeRowIconText: { color: "#087A50", fontSize: 13, fontWeight: "800" },
+  financeRowName: {
+    color: "#273952",
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    marginLeft: 10,
+  },
+  financeRowAmount: { fontSize: 13, fontWeight: "800" },
+  financeRowPressed: { backgroundColor: "#F1F6F2" },
+  financeRowChevron: { color: "#8B98A8", fontSize: 19, marginLeft: 8 },
+  systemItemBadge: {
+    color: "#087A50",
+    fontSize: 10,
+    fontWeight: "800",
+    marginHorizontal: 8,
+  },
+  protectedSwipeRow: { backgroundColor: "#FFFFFF" },
+  lockedInput: { backgroundColor: "#F0F2EF", color: "#687589" },
+  dreamSwipeRow: {
+    backgroundColor: "#C74E48",
+    borderRadius: 16,
+    marginBottom: 10,
+    overflow: "hidden",
+    position: "relative",
+  },
   swipeDreamForeground: { marginBottom: 0 },
-  financeAddButton: { alignItems: 'center', borderColor: '#2B966A', borderRadius: 13, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', marginTop: 20, minHeight: 52 },
-  financeAddButtonText: { color: '#087A50', fontSize: 15, fontWeight: '700' },
-  financeTypeSelector: { backgroundColor: '#E9EDE9', borderRadius: 13, flexDirection: 'row', gap: 5, padding: 5 },
-  financeTypeOption: { alignItems: 'center', borderRadius: 9, flex: 1, justifyContent: 'center', minHeight: 44 },
-  financeTypeOptionActive: { backgroundColor: '#FFFFFF', shadowColor: '#132442', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 5 },
-  financeTypeOptionText: { color: '#718096', fontSize: 14, fontWeight: '700' },
-  financeTypeOptionTextActive: { color: '#087A50' },
-  investableRow: { alignItems: 'center', backgroundColor: '#EAF5ED', borderRadius: 14, flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, padding: 14 },
-  investableLabel: { color: '#176342', fontSize: 13, fontWeight: '600' },
-  investableValue: { color: '#075B35', fontSize: 16, fontWeight: '800' },
-  calendarLegend: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 17 },
-  monthSelectButton: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 18, flexDirection: 'row', minHeight: 38, paddingHorizontal: 13 },
-  monthSelectText: { color: '#273952', fontSize: 13, fontWeight: '700' },
-  monthSelectChevron: { color: '#087A50', fontSize: 16, marginLeft: 6 },
-  legendChip: { alignItems: 'center', flexDirection: 'row' },
-  legendChipText: { color: '#617085', fontSize: 11 },
-  calendarCard: { backgroundColor: '#FFFFFF', borderRadius: 18, marginTop: 12, padding: 12 },
-  weekRow: { flexDirection: 'row' },
-  weekText: { color: '#718096', flex: 1, fontSize: 11, textAlign: 'center' },
-  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6 },
-  calendarDay: { alignItems: 'center', height: 43, justifyContent: 'center', position: 'relative', width: '14.2857%' },
-  calendarDayWithTotals: { height: 62, justifyContent: 'flex-start', paddingTop: 6 },
-  calendarDayText: { color: '#34455B', fontSize: 12 },
-  calendarToday: { borderColor: '#87B99B', borderRadius: 11, borderWidth: 1 },
-  calendarTodayText: { color: '#087A50', fontWeight: '800' },
-  calendarSelected: { backgroundColor: MACARON_YELLOW, borderColor: '#E7C765', borderRadius: 11, borderWidth: 1 },
-  calendarSelectedText: { color: '#6A5214', fontWeight: '800' },
-  calendarMark: { borderRadius: 3, bottom: 4, height: 4, position: 'absolute', width: 18 },
-  fixedCalendarMark: { borderRadius: 3, bottom: 3, height: 4, left: 8, position: 'absolute', width: 13 },
+  financeAddButton: {
+    alignItems: "center",
+    borderColor: "#2B966A",
+    borderRadius: 13,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    justifyContent: "center",
+    marginTop: 20,
+    minHeight: 52,
+  },
+  financeAddButtonText: { color: "#087A50", fontSize: 15, fontWeight: "700" },
+  financeTypeSelector: {
+    backgroundColor: "#E9EDE9",
+    borderRadius: 13,
+    flexDirection: "row",
+    gap: 5,
+    padding: 5,
+  },
+  financeTypeOption: {
+    alignItems: "center",
+    borderRadius: 9,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  financeTypeOptionActive: {
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#132442",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 5,
+  },
+  financeTypeOptionText: { color: "#718096", fontSize: 14, fontWeight: "700" },
+  financeTypeOptionTextActive: { color: "#087A50" },
+  investableRow: {
+    alignItems: "center",
+    backgroundColor: "#EAF5ED",
+    borderRadius: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    padding: 14,
+  },
+  investableLabel: { color: "#176342", fontSize: 13, fontWeight: "600" },
+  investableValue: { color: "#075B35", fontSize: 16, fontWeight: "800" },
+  calendarLegend: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 17,
+  },
+  monthSelectButton: {
+    alignItems: "center",
+    backgroundColor: "#F0EDE6",
+    borderRadius: 18,
+    flexDirection: "row",
+    minHeight: 38,
+    paddingHorizontal: 13,
+  },
+  monthSelectText: { color: "#273952", fontSize: 13, fontWeight: "700" },
+  monthSelectChevron: { color: "#087A50", fontSize: 16, marginLeft: 6 },
+  legendChip: { alignItems: "center", flexDirection: "row" },
+  legendChipText: { color: "#617085", fontSize: 11 },
+  calendarCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    marginTop: 12,
+    padding: 12,
+  },
+  weekRow: { flexDirection: "row" },
+  weekText: { color: "#718096", flex: 1, fontSize: 11, textAlign: "center" },
+  calendarGrid: { flexDirection: "row", flexWrap: "wrap", marginTop: 6 },
+  calendarDay: {
+    alignItems: "center",
+    height: 43,
+    justifyContent: "center",
+    position: "relative",
+    width: "14.2857%",
+  },
+  calendarDayWithTotals: {
+    height: 62,
+    justifyContent: "flex-start",
+    paddingTop: 6,
+  },
+  calendarDayText: { color: "#34455B", fontSize: 12 },
+  calendarToday: { borderColor: "#87B99B", borderRadius: 11, borderWidth: 1 },
+  calendarTodayText: { color: "#087A50", fontWeight: "800" },
+  calendarSelected: {
+    backgroundColor: MACARON_YELLOW,
+    borderColor: "#E7C765",
+    borderRadius: 11,
+    borderWidth: 1,
+  },
+  calendarSelectedText: { color: "#6A5214", fontWeight: "800" },
+  calendarMark: {
+    borderRadius: 3,
+    bottom: 4,
+    height: 4,
+    position: "absolute",
+    width: 18,
+  },
+  fixedCalendarMark: {
+    borderRadius: 3,
+    bottom: 3,
+    height: 4,
+    left: 8,
+    position: "absolute",
+    width: 13,
+  },
   fixedCalendarMarkSecond: { left: undefined, right: 8 },
-  fixedCalendarMarks: { bottom: 3, flexDirection: 'row', gap: 2, justifyContent: 'center', left: 4, position: 'absolute', right: 4 },
+  fixedCalendarMarks: {
+    bottom: 3,
+    flexDirection: "row",
+    gap: 2,
+    justifyContent: "center",
+    left: 4,
+    position: "absolute",
+    right: 4,
+  },
   fixedCalendarDot: { borderRadius: 2, height: 4, width: 7 },
-  calendarIncomeAmount: { color: '#087A50', fontSize: 8, fontWeight: '700', marginTop: 3, maxWidth: '92%' },
-  calendarExpenseAmount: { color: '#B94743', fontSize: 8, fontWeight: '700', marginTop: 1, maxWidth: '92%' },
-  activityTitle: { color: '#687589', fontSize: 12, fontWeight: '700', marginBottom: 8, marginTop: 20 },
-  eventRow: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 14, flexDirection: 'row', marginBottom: 8, padding: 12 },
-  eventDate: { alignItems: 'center', borderRadius: 9, justifyContent: 'center', minHeight: 32, minWidth: 44 },
-  eventDateText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
-  eventLabel: { color: '#273952', flex: 1, fontSize: 13, fontWeight: '600', marginLeft: 10 },
-  eventValue: { fontSize: 13, fontWeight: '800' },
-  transactionList: { backgroundColor: '#FFFFFF', borderRadius: 15, overflow: 'hidden' },
-  emptyTransactionText: { color: '#8A96A5', fontSize: 13, padding: 16, textAlign: 'center' },
-  transactionRow: { alignItems: 'center', borderBottomColor: '#EEEAE2', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', minHeight: 60, paddingHorizontal: 13 },
-  swipeRow: { backgroundColor: '#C74E48', overflow: 'hidden', position: 'relative' },
-  swipeRowForeground: { backgroundColor: '#FFFFFF' },
-  swipeDeleteAction: { alignItems: 'center', bottom: 0, justifyContent: 'center', position: 'absolute', right: 0, top: 0, width: 76 },
+  calendarIncomeAmount: {
+    color: "#087A50",
+    fontSize: 8,
+    fontWeight: "700",
+    marginTop: 3,
+    maxWidth: "92%",
+  },
+  calendarExpenseAmount: {
+    color: "#B94743",
+    fontSize: 8,
+    fontWeight: "700",
+    marginTop: 1,
+    maxWidth: "92%",
+  },
+  activityTitle: {
+    color: "#687589",
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 8,
+    marginTop: 20,
+  },
+  eventRow: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    flexDirection: "row",
+    marginBottom: 8,
+    padding: 12,
+  },
+  eventDate: {
+    alignItems: "center",
+    borderRadius: 9,
+    justifyContent: "center",
+    minHeight: 32,
+    minWidth: 44,
+  },
+  eventDateText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" },
+  eventLabel: {
+    color: "#273952",
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    marginLeft: 10,
+  },
+  eventValue: { fontSize: 13, fontWeight: "800" },
+  transactionList: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 15,
+    overflow: "hidden",
+  },
+  emptyTransactionText: {
+    color: "#8A96A5",
+    fontSize: 13,
+    padding: 16,
+    textAlign: "center",
+  },
+  transactionRow: {
+    alignItems: "center",
+    borderBottomColor: "#EEEAE2",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    minHeight: 60,
+    paddingHorizontal: 13,
+  },
+  swipeRow: {
+    backgroundColor: "#C74E48",
+    overflow: "hidden",
+    position: "relative",
+  },
+  swipeRowForeground: { backgroundColor: "#FFFFFF" },
+  swipeDeleteAction: {
+    alignItems: "center",
+    bottom: 0,
+    justifyContent: "center",
+    position: "absolute",
+    right: 0,
+    top: 0,
+    width: 76,
+  },
   swipeDeleteIcon: { fontSize: 23 },
-  transactionKindDot: { borderRadius: 5, height: 10, marginRight: 10, width: 10 },
+  transactionKindDot: {
+    borderRadius: 5,
+    height: 10,
+    marginRight: 10,
+    width: 10,
+  },
   transactionCopy: { flex: 1 },
-  transactionCategory: { color: '#273952', fontSize: 13, fontWeight: '700' },
-  transactionNote: { color: '#718096', fontSize: 10, marginTop: 3 },
-  transactionAmount: { fontSize: 12, fontWeight: '800', marginLeft: 8 },
-  transactionDetailCard: { backgroundColor: '#F7F9F7', borderRadius: 15, marginTop: 18, paddingHorizontal: 15 },
-  transactionDetailRow: { alignItems: 'flex-start', borderBottomColor: '#E5E9E6', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 13 },
-  transactionDetailLabel: { color: '#718096', fontSize: 13, fontWeight: '600' },
-  transactionDetailValue: { color: '#273952', flex: 1, fontSize: 14, fontWeight: '700', marginLeft: 20, textAlign: 'right' },
-  transactionPickerBox: { backgroundColor: '#F7F9F7', borderColor: '#DDE3E0', borderRadius: 13, borderWidth: 1, maxHeight: 150, overflow: 'hidden' },
-  deleteConfirmOverlay: { alignItems: 'center', backgroundColor: 'rgba(13, 29, 24, 0.48)', flex: 1, justifyContent: 'center', padding: 28 },
-  deleteConfirmCard: { alignItems: 'center', backgroundColor: '#FCFAF5', borderRadius: 22, maxWidth: 360, padding: 24, width: '100%' },
-  deleteConfirmIcon: { alignItems: 'center', backgroundColor: '#FCE9E6', borderRadius: 28, height: 56, justifyContent: 'center', marginBottom: 14, width: 56 },
+  transactionCategory: { color: "#273952", fontSize: 13, fontWeight: "700" },
+  transactionNote: { color: "#718096", fontSize: 10, marginTop: 3 },
+  transactionAmount: { fontSize: 12, fontWeight: "800", marginLeft: 8 },
+  transactionDetailCard: {
+    backgroundColor: "#F7F9F7",
+    borderRadius: 15,
+    marginTop: 18,
+    paddingHorizontal: 15,
+  },
+  transactionDetailRow: {
+    alignItems: "flex-start",
+    borderBottomColor: "#E5E9E6",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 13,
+  },
+  transactionDetailLabel: { color: "#718096", fontSize: 13, fontWeight: "600" },
+  transactionDetailValue: {
+    color: "#273952",
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    marginLeft: 20,
+    textAlign: "right",
+  },
+  transactionPickerBox: {
+    backgroundColor: "#F7F9F7",
+    borderColor: "#DDE3E0",
+    borderRadius: 13,
+    borderWidth: 1,
+    maxHeight: 150,
+    overflow: "hidden",
+  },
+  deleteConfirmOverlay: {
+    alignItems: "center",
+    backgroundColor: "rgba(13, 29, 24, 0.48)",
+    flex: 1,
+    justifyContent: "center",
+    padding: 28,
+  },
+  deleteConfirmCard: {
+    alignItems: "center",
+    backgroundColor: "#FCFAF5",
+    borderRadius: 22,
+    maxWidth: 360,
+    padding: 24,
+    width: "100%",
+  },
+  deleteConfirmIcon: {
+    alignItems: "center",
+    backgroundColor: "#FCE9E6",
+    borderRadius: 28,
+    height: 56,
+    justifyContent: "center",
+    marginBottom: 14,
+    width: 56,
+  },
   deleteConfirmIconText: { fontSize: 25 },
-  deleteConfirmTitle: { color: '#132442', fontSize: 20, fontWeight: '800', textAlign: 'center' },
-  deleteConfirmDescription: { color: '#718096', fontSize: 13, lineHeight: 20, marginTop: 8, textAlign: 'center' },
-  deleteConfirmActions: { flexDirection: 'row', gap: 10, marginTop: 22, width: '100%' },
-  deleteConfirmCancelButton: { alignItems: 'center', borderColor: '#CBD3D0', borderRadius: 12, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 48 },
-  deleteConfirmCancelText: { color: '#435047', fontSize: 15, fontWeight: '800' },
-  deleteConfirmDeleteButton: { alignItems: 'center', backgroundColor: '#C74E48', borderRadius: 12, flex: 1, justifyContent: 'center', minHeight: 48 },
-  deleteConfirmDeleteText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800' },
-  fixedFinanceGrid: { flexDirection: 'row', gap: 10 },
+  deleteConfirmTitle: {
+    color: "#132442",
+    fontSize: 20,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  deleteConfirmDescription: {
+    color: "#718096",
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  deleteConfirmActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 22,
+    width: "100%",
+  },
+  deleteConfirmCancelButton: {
+    alignItems: "center",
+    borderColor: "#CBD3D0",
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  deleteConfirmCancelText: {
+    color: "#435047",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  deleteConfirmDeleteButton: {
+    alignItems: "center",
+    backgroundColor: "#C74E48",
+    borderRadius: 12,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  deleteConfirmDeleteText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  fixedFinanceGrid: { flexDirection: "row", gap: 10 },
   fixedFinanceList: { gap: 9 },
-  fixedFinanceCard: { backgroundColor: '#FFFFFF', borderRadius: 15, borderTopWidth: 6, flex: 1, padding: 13 },
-  fixedFinanceCardHeader: { alignItems: 'center', flexDirection: 'row' },
-  fixedFinanceSwatch: { borderRadius: 5, height: 10, marginRight: 7, width: 10 },
-  fixedFinanceLabel: { color: '#526277', fontSize: 12, fontWeight: '700' },
-  fixedFinanceAmount: { color: '#132442', fontSize: 15, fontWeight: '800', marginTop: 9 },
-  fixedFinanceDate: { color: '#8995A4', fontSize: 10, marginTop: 5 },
-  pickerSheet: { backgroundColor: '#FCFAF5', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingBottom: 34 },
-  yearMonthPickers: { flexDirection: 'row', marginTop: 8 },
+  fixedFinanceCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 15,
+    borderTopWidth: 6,
+    flex: 1,
+    padding: 13,
+  },
+  fixedFinanceCardHeader: { alignItems: "center", flexDirection: "row" },
+  fixedFinanceSwatch: {
+    borderRadius: 5,
+    height: 10,
+    marginRight: 7,
+    width: 10,
+  },
+  fixedFinanceLabel: { color: "#526277", fontSize: 12, fontWeight: "700" },
+  fixedFinanceAmount: {
+    color: "#132442",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 9,
+  },
+  fixedFinanceDate: { color: "#8995A4", fontSize: 10, marginTop: 5 },
+  pickerSheet: {
+    backgroundColor: "#FCFAF5",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 34,
+  },
+  yearMonthPickers: { flexDirection: "row", marginTop: 8 },
   yearMonthPicker: { flex: 1 },
-  categoryPickerBox: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, overflow: 'hidden' },
-  noteInput: { minHeight: 96, paddingTop: 14, textAlignVertical: 'top' },
-  profileHeader: { alignItems: 'center', flexDirection: 'row', marginTop: 22 },
-  profileTopBar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  settingsButton: { alignItems: 'center', backgroundColor: '#F0EDE6', borderRadius: 15, justifyContent: 'center', minHeight: 36, minWidth: 58 },
+  categoryPickerBox: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  noteInput: { minHeight: 96, paddingTop: 14, textAlignVertical: "top" },
+  profileHeader: { alignItems: "center", flexDirection: "row", marginTop: 22 },
+  profileTopBar: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  settingsButton: {
+    alignItems: "center",
+    backgroundColor: "#F0EDE6",
+    borderRadius: 15,
+    justifyContent: "center",
+    minHeight: 36,
+    minWidth: 58,
+  },
   settingsSpacer: { width: 58 },
-  profileAvatar: { alignItems: 'center', backgroundColor: '#087A50', borderRadius: 29, height: 58, justifyContent: 'center', marginRight: 13, width: 58 },
-  profileAvatarImage: { borderRadius: 29, height: 58, marginRight: 13, width: 58 },
-  profileAvatarText: { color: '#FFFFFF', fontSize: 21, fontWeight: '800' },
-  profileName: { color: '#132442', fontSize: 19, fontWeight: '800' },
-  profileSummaryCard: { backgroundColor: '#EAF5ED', borderRadius: 16, flexDirection: 'row', justifyContent: 'space-around', marginTop: 20, padding: 16 },
-  profileSummaryLabel: { color: '#4D6D5E', fontSize: 11 },
-  profileSummaryValue: { color: '#075B35', fontSize: 16, fontWeight: '800', marginTop: 4 },
-  profileSummaryDivider: { backgroundColor: '#C9DFD0', width: StyleSheet.hairlineWidth },
-  profileRow: { alignItems: 'center', backgroundColor: '#FFFFFF', borderBottomColor: '#EEEAE2', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', minHeight: 60, paddingHorizontal: 13 },
-  profileRowIcon: { alignItems: 'center', backgroundColor: '#EEF2ED', borderRadius: 9, height: 31, justifyContent: 'center', width: 31 },
-  profileRowIconText: { color: '#087A50', fontSize: 14, fontWeight: '800' },
+  profileAvatar: {
+    alignItems: "center",
+    backgroundColor: "#087A50",
+    borderRadius: 29,
+    height: 58,
+    justifyContent: "center",
+    marginRight: 13,
+    width: 58,
+  },
+  profileAvatarImage: {
+    borderRadius: 29,
+    height: 58,
+    marginRight: 13,
+    width: 58,
+  },
+  profileAvatarText: { color: "#FFFFFF", fontSize: 21, fontWeight: "800" },
+  profileName: { color: "#132442", fontSize: 19, fontWeight: "800" },
+  profileSummaryCard: {
+    backgroundColor: "#EAF5ED",
+    borderRadius: 16,
+    flexDirection: "row",
+    justifyContent: "space-around",
+    marginTop: 20,
+    padding: 16,
+  },
+  profileSummaryLabel: { color: "#4D6D5E", fontSize: 11 },
+  profileSummaryValue: {
+    color: "#075B35",
+    fontSize: 16,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  profileSummaryDivider: {
+    backgroundColor: "#C9DFD0",
+    width: StyleSheet.hairlineWidth,
+  },
+  profileRow: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderBottomColor: "#EEEAE2",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    minHeight: 60,
+    paddingHorizontal: 13,
+  },
+  profileRowIcon: {
+    alignItems: "center",
+    backgroundColor: "#EEF2ED",
+    borderRadius: 9,
+    height: 31,
+    justifyContent: "center",
+    width: 31,
+  },
+  profileRowIconText: { color: "#087A50", fontSize: 14, fontWeight: "800" },
   profileRowCopy: { flex: 1, marginLeft: 11 },
-  profileRowTitle: { color: '#273952', fontSize: 14, fontWeight: '700' },
-  profileRowDetail: { color: '#718096', fontSize: 11, marginTop: 3 },
-  profileColorSwatch: { borderColor: '#FFFFFF', borderRadius: 9, borderWidth: 2, height: 18, marginRight: 9, width: 18 },
-  profileChevron: { color: '#8B98A8', fontSize: 20 },
-  dreamListHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 24 },
-  dreamListAdd: { color: '#087A50', fontSize: 12, fontWeight: '800' },
-  disabledDreamListButton: { backgroundColor: '#ECEAE5', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 8 },
-  disabledDreamListText: { color: '#8A96A5', fontSize: 10, fontWeight: '700' },
-  dreamListLimit: { color: '#8A96A5', fontSize: 10, marginTop: 8 },
+  profileRowTitle: { color: "#273952", fontSize: 14, fontWeight: "700" },
+  profileRowDetail: { color: "#718096", fontSize: 11, marginTop: 3 },
+  profileColorSwatch: {
+    borderColor: "#FFFFFF",
+    borderRadius: 9,
+    borderWidth: 2,
+    height: 18,
+    marginRight: 9,
+    width: 18,
+  },
+  profileChevron: { color: "#8B98A8", fontSize: 20 },
+  dreamListHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 24,
+  },
+  dreamListAdd: { color: "#087A50", fontSize: 12, fontWeight: "800" },
+  disabledDreamListButton: {
+    backgroundColor: "#ECEAE5",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  disabledDreamListText: { color: "#8A96A5", fontSize: 10, fontWeight: "700" },
+  dreamListLimit: { color: "#8A96A5", fontSize: 10, marginTop: 8 },
   profileDreamList: { gap: 10, paddingBottom: 4, paddingTop: 12 },
-  profileDreamCard: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 9, width: 130 },
-  profileDreamImage: { borderRadius: 10, height: 74, width: '100%' },
-  profileDreamFallback: { alignItems: 'center', backgroundColor: '#EAF5ED', borderRadius: 10, height: 74, justifyContent: 'center' },
-  profileDreamTitle: { color: '#273952', fontSize: 12, fontWeight: '800', marginTop: 8 },
-  profileDreamAmount: { color: '#718096', fontSize: 10, marginTop: 3 },
-  profileDreamAddCard: { alignItems: 'center', borderColor: '#2B966A', borderRadius: 14, borderStyle: 'dashed', borderWidth: 1, justifyContent: 'center', minHeight: 122, width: 110 },
-  profileDreamAddIcon: { color: '#087A50', fontSize: 24 },
-  profileDreamAddText: { color: '#087A50', fontSize: 11, fontWeight: '700', marginTop: 4 },
-  avatarPicker: { alignItems: 'center', marginVertical: 20 },
+  profileDreamCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 9,
+    width: 130,
+  },
+  profileDreamImage: { borderRadius: 10, height: 74, width: "100%" },
+  profileDreamFallback: {
+    alignItems: "center",
+    backgroundColor: "#EAF5ED",
+    borderRadius: 10,
+    height: 74,
+    justifyContent: "center",
+  },
+  profileDreamTitle: {
+    color: "#273952",
+    fontSize: 12,
+    fontWeight: "800",
+    marginTop: 8,
+  },
+  profileDreamAmount: { color: "#718096", fontSize: 10, marginTop: 3 },
+  profileDreamAddCard: {
+    alignItems: "center",
+    borderColor: "#2B966A",
+    borderRadius: 14,
+    borderStyle: "dashed",
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 122,
+    width: 110,
+  },
+  profileDreamAddIcon: { color: "#087A50", fontSize: 24 },
+  profileDreamAddText: {
+    color: "#087A50",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 4,
+  },
+  avatarPicker: { alignItems: "center", marginVertical: 20 },
   avatarPickerImage: { borderRadius: 44, height: 88, width: 88 },
-  avatarPickerIcon: { alignItems: 'center', backgroundColor: '#EAF5ED', borderRadius: 44, color: '#087A50', fontSize: 36, height: 88, lineHeight: 82, textAlign: 'center', width: 88 },
-  avatarPickerText: { color: '#087A50', fontSize: 12, fontWeight: '700', marginTop: 8 },
-  cloudInvoiceSection: { backgroundColor: '#F3F7F3', borderColor: '#DCE8DF', borderRadius: 16, borderWidth: 1, marginTop: 22, padding: 15 },
-  cloudInvoiceTitle: { color: '#132442', fontSize: 16, fontWeight: '800' },
-  cloudInvoiceDescription: { color: '#718096', fontSize: 12, lineHeight: 18, marginBottom: 12, marginTop: 5 },
-  cloudInvoiceInputInvalid: { borderColor: '#C74E48' },
-  cloudInvoiceTestButton: { alignItems: 'center', borderColor: '#087A50', borderRadius: 12, borderWidth: 1, justifyContent: 'center', marginTop: 10, minHeight: 46 },
-  cloudInvoiceTestButtonText: { color: '#087A50', fontSize: 14, fontWeight: '800' },
-  cloudInvoiceStatus: { backgroundColor: '#E6F4EA', borderRadius: 12, marginTop: 10, padding: 12 },
-  cloudInvoiceStatusTitle: { color: '#087A50', fontSize: 13, fontWeight: '800' },
-  cloudInvoiceStatusText: { color: '#526277', fontSize: 11, lineHeight: 17, marginTop: 4 },
-  deleteDataButton: { alignItems: 'center', borderColor: '#E2AAA5', borderRadius: 12, borderWidth: 1, marginTop: 22, padding: 14 },
-  deleteDataText: { color: '#B94743', fontSize: 13, fontWeight: '800' },
-  subpageHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  subpageBack: { color: '#087A50', fontSize: 36, lineHeight: 38, width: 58 },
-  subpageTitle: { color: '#132442', fontSize: 20, fontWeight: '800' },
-  fixedEntryManageCard: { backgroundColor: '#FFFFFF', borderLeftWidth: 7, borderRadius: 15, marginTop: 12, padding: 15, position: 'relative' },
-  fixedColorSection: { backgroundColor: '#FFFFFF', borderRadius: 16, marginTop: 18, padding: 15 },
-  fixedColorTitle: { color: '#132442', fontSize: 15, fontWeight: '800' },
-  fixedColorDescription: { color: '#718096', fontSize: 11, marginTop: 5 },
-  fixedListTotalCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 16, borderTopWidth: 7, marginTop: 14, padding: 16 },
-  fixedListTotalLabel: { color: '#617085', fontSize: 11, fontWeight: '700' },
-  fixedListTotalValue: { color: '#132442', fontSize: 22, fontWeight: '900', marginTop: 5 },
-  fixedListHeading: { color: '#687589', fontSize: 12, fontWeight: '700', marginTop: 20 },
-  fixedEntryManageTop: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingRight: 48 },
-  fixedEntryManageTitle: { color: '#273952', flex: 1, fontSize: 14, fontWeight: '800' },
-  fixedEntryManageAmount: { color: '#132442', fontSize: 14, fontWeight: '800' },
-  fixedEntryManageMeta: { color: '#718096', fontSize: 11, marginTop: 7, paddingRight: 48 },
-  inlineDeleteButton: { position: 'absolute', right: 14, top: 44 },
-  inlineDeleteText: { color: '#B94743', fontSize: 11, fontWeight: '800' },
-  categoryManageList: { backgroundColor: '#FFFFFF', borderRadius: 15, marginTop: 20, overflow: 'hidden' },
-  categoryManageRow: { alignItems: 'center', borderBottomColor: '#EEEAE2', borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row', justifyContent: 'space-between', minHeight: 58, paddingHorizontal: 14 },
-  categoryManageActions: { alignItems: 'center', flexDirection: 'row', gap: 18 },
-  editHint: { color: '#087A50', fontSize: 11, fontWeight: '700' },
-  reminderCard: { backgroundColor: '#FFFFFF', borderRadius: 16, marginTop: 12, padding: 15, position: 'relative' },
-  reminderCardHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingRight: 40 },
-  reminderItemBadge: { backgroundColor: '#EAF5ED', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 5 },
-  reminderItemText: { color: '#087A50', fontSize: 10, fontWeight: '800' },
-  reminderTime: { color: '#718096', fontSize: 10 },
-  reminderTitle: { color: '#132442', fontSize: 15, fontWeight: '800', marginTop: 12, paddingRight: 38 },
-  reminderBody: { color: '#617085', fontSize: 12, lineHeight: 18, marginTop: 5, paddingRight: 38 },
-  reminderDeleteButton: { position: 'absolute', right: 14, top: 16 },
-  reminderPickerRow: { flexDirection: 'row', gap: 7 },
-  reminderPickerBox: { backgroundColor: '#FFFFFF', borderColor: '#DDE3E8', borderRadius: 12, borderWidth: 1, flex: 1, overflow: 'hidden' },
-  localDataDeleteButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#E2AAA5', borderRadius: 16, borderWidth: 1, justifyContent: 'center', marginTop: 24, minHeight: 58 },
-  localDataDeleteTitle: { color: '#B94743', fontSize: 15, fontWeight: '800' },
-  confirmOverlay: { alignItems: 'center', backgroundColor: 'rgba(19,36,66,0.42)', flex: 1, justifyContent: 'center', padding: 24 },
-  confirmCard: { alignItems: 'center', backgroundColor: '#FCFAF5', borderRadius: 24, maxWidth: 380, padding: 24, width: '100%' },
-  confirmIcon: { alignItems: 'center', backgroundColor: '#F9E5E1', borderRadius: 25, height: 50, justifyContent: 'center', width: 50 },
-  confirmIconText: { color: '#B94743', fontSize: 24, fontWeight: '900' },
-  confirmTitle: { color: '#132442', fontSize: 20, fontWeight: '900', marginTop: 16 },
-  confirmMessage: { color: '#617085', fontSize: 13, lineHeight: 20, marginTop: 10, textAlign: 'center' },
-  confirmDeleteButton: { alignItems: 'center', backgroundColor: '#B94743', borderRadius: 13, justifyContent: 'center', marginTop: 22, minHeight: 50, width: '100%' },
-  confirmCancelButton: { alignItems: 'center', justifyContent: 'center', marginTop: 8, minHeight: 46, width: '100%' },
-  confirmCancelText: { color: '#526277', fontSize: 14, fontWeight: '700' },
-  privacyHeader: { backgroundColor: '#FCFAF5', paddingBottom: 4, paddingHorizontal: 20, paddingTop: Platform.OS === 'ios' ? 54 : (NativeStatusBar.currentHeight ?? 0) + 10, zIndex: 1 },
+  avatarPickerIcon: {
+    alignItems: "center",
+    backgroundColor: "#EAF5ED",
+    borderRadius: 44,
+    color: "#087A50",
+    fontSize: 36,
+    height: 88,
+    lineHeight: 82,
+    textAlign: "center",
+    width: 88,
+  },
+  avatarPickerText: {
+    color: "#087A50",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 8,
+  },
+  cloudInvoiceSection: {
+    backgroundColor: "#F3F7F3",
+    borderColor: "#DCE8DF",
+    borderRadius: 16,
+    borderWidth: 1,
+    marginTop: 22,
+    padding: 15,
+  },
+  cloudInvoiceTitle: { color: "#132442", fontSize: 16, fontWeight: "800" },
+  cloudInvoiceDescription: {
+    color: "#718096",
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 12,
+    marginTop: 5,
+  },
+  cloudInvoiceInputInvalid: { borderColor: "#C74E48" },
+  cloudInvoiceInputDisabled: {
+    backgroundColor: "#FFFFFF",
+    color: "#9AA5B4",
+  },
+  cloudInvoiceTestButton: {
+    alignItems: "center",
+    borderColor: "#087A50",
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: "center",
+    marginTop: 10,
+    minHeight: 46,
+  },
+  cloudInvoiceTestButtonText: {
+    color: "#087A50",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  cloudInvoiceStatus: {
+    backgroundColor: "#E6F4EA",
+    borderRadius: 12,
+    marginTop: 10,
+    padding: 12,
+  },
+  cloudInvoiceStatusTitle: {
+    color: "#087A50",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  cloudInvoiceStatusText: {
+    color: "#526277",
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  deleteDataButton: {
+    alignItems: "center",
+    borderColor: "#E2AAA5",
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 22,
+    padding: 14,
+  },
+  deleteDataText: { color: "#B94743", fontSize: 13, fontWeight: "800" },
+  subpageHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  subpageBack: { color: "#087A50", fontSize: 36, lineHeight: 38, width: 58 },
+  subpageTitle: { color: "#132442", fontSize: 20, fontWeight: "800" },
+  fixedEntryManageCard: {
+    backgroundColor: "#FFFFFF",
+    borderLeftWidth: 7,
+    borderRadius: 15,
+    marginTop: 12,
+    padding: 15,
+    position: "relative",
+  },
+  fixedColorSection: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginTop: 18,
+    padding: 15,
+  },
+  fixedColorTitle: { color: "#132442", fontSize: 15, fontWeight: "800" },
+  fixedColorDescription: { color: "#718096", fontSize: 11, marginTop: 5 },
+  fixedListTotalCard: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    borderTopWidth: 7,
+    marginTop: 14,
+    padding: 16,
+  },
+  fixedListTotalLabel: { color: "#617085", fontSize: 11, fontWeight: "700" },
+  fixedListTotalValue: {
+    color: "#132442",
+    fontSize: 22,
+    fontWeight: "900",
+    marginTop: 5,
+  },
+  fixedListHeading: {
+    color: "#687589",
+    fontSize: 12,
+    fontWeight: "700",
+    marginTop: 20,
+  },
+  fixedEntryManageTop: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingRight: 48,
+  },
+  fixedEntryManageTitle: {
+    color: "#273952",
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  fixedEntryManageAmount: { color: "#132442", fontSize: 14, fontWeight: "800" },
+  fixedEntryManageMeta: {
+    color: "#718096",
+    fontSize: 11,
+    marginTop: 7,
+    paddingRight: 48,
+  },
+  inlineDeleteButton: { position: "absolute", right: 14, top: 44 },
+  inlineDeleteText: { color: "#B94743", fontSize: 11, fontWeight: "800" },
+  categoryManageList: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 15,
+    marginTop: 20,
+    overflow: "hidden",
+  },
+  categoryManageRow: {
+    alignItems: "center",
+    borderBottomColor: "#EEEAE2",
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    minHeight: 58,
+    paddingHorizontal: 14,
+  },
+  categoryManageActions: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 18,
+  },
+  editHint: { color: "#087A50", fontSize: 11, fontWeight: "700" },
+  reminderCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    marginTop: 12,
+    padding: 15,
+    position: "relative",
+  },
+  reminderCardHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingRight: 40,
+  },
+  reminderItemBadge: {
+    backgroundColor: "#EAF5ED",
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  reminderItemText: { color: "#087A50", fontSize: 10, fontWeight: "800" },
+  reminderTime: { color: "#718096", fontSize: 10 },
+  reminderTitle: {
+    color: "#132442",
+    fontSize: 15,
+    fontWeight: "800",
+    marginTop: 12,
+    paddingRight: 38,
+  },
+  reminderBody: {
+    color: "#617085",
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 5,
+    paddingRight: 38,
+  },
+  reminderDeleteButton: { position: "absolute", right: 14, top: 16 },
+  reminderPickerRow: { flexDirection: "row", gap: 7 },
+  reminderPickerBox: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#DDE3E8",
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    overflow: "hidden",
+  },
+  languageOptions: { gap: 10, marginTop: 22 },
+  languageOption: { alignItems: "center", backgroundColor: "#FFFFFF", borderColor: "#E1E7E3", borderRadius: 16, borderWidth: 1, flexDirection: "row", justifyContent: "space-between", minHeight: 72, paddingHorizontal: 16, paddingVertical: 12 },
+  languageOptionSelected: { backgroundColor: "#F2F7F3", borderColor: "#087A50" },
+  languageOptionCopy: { flex: 1, paddingRight: 14 },
+  languageOptionTitle: { color: "#132442", fontSize: 15, fontWeight: "800" },
+  languageOptionDescription: { color: "#718096", fontSize: 11, lineHeight: 16, marginTop: 4 },
+  languageRadio: { alignItems: "center", borderColor: "#AAB5B0", borderRadius: 10, borderWidth: 2, height: 20, justifyContent: "center", width: 20 },
+  languageRadioSelected: { borderColor: "#087A50" },
+  languageRadioDot: { backgroundColor: "#087A50", borderRadius: 5, height: 10, width: 10 },
+  localDataDeleteButton: {
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderColor: "#E2AAA5",
+    borderRadius: 16,
+    borderWidth: 1,
+    justifyContent: "center",
+    marginTop: 24,
+    minHeight: 58,
+  },
+  localDataDeleteTitle: { color: "#B94743", fontSize: 15, fontWeight: "800" },
+  confirmOverlay: {
+    alignItems: "center",
+    backgroundColor: "rgba(19,36,66,0.42)",
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  confirmCard: {
+    alignItems: "center",
+    backgroundColor: "#FCFAF5",
+    borderRadius: 24,
+    maxWidth: 380,
+    padding: 24,
+    width: "100%",
+  },
+  confirmIcon: {
+    alignItems: "center",
+    backgroundColor: "#F9E5E1",
+    borderRadius: 25,
+    height: 50,
+    justifyContent: "center",
+    width: 50,
+  },
+  confirmIconText: { color: "#B94743", fontSize: 24, fontWeight: "900" },
+  confirmTitle: {
+    color: "#132442",
+    fontSize: 20,
+    fontWeight: "900",
+    marginTop: 16,
+  },
+  confirmMessage: {
+    color: "#617085",
+    fontSize: 13,
+    lineHeight: 20,
+    marginTop: 10,
+    textAlign: "center",
+  },
+  confirmDeleteButton: {
+    alignItems: "center",
+    backgroundColor: "#B94743",
+    borderRadius: 13,
+    justifyContent: "center",
+    marginTop: 22,
+    minHeight: 50,
+    width: "100%",
+  },
+  confirmCancelButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+    minHeight: 46,
+    width: "100%",
+  },
+  confirmCancelText: { color: "#526277", fontSize: 14, fontWeight: "700" },
+  privacyHeader: {
+    backgroundColor: "#FCFAF5",
+    paddingBottom: 4,
+    paddingHorizontal: 20,
+    paddingTop:
+      Platform.OS === "ios" ? 54 : (NativeStatusBar.currentHeight ?? 0) + 10,
+    zIndex: 1,
+  },
   privacyScroll: { flex: 1 },
   privacyContent: { paddingBottom: 40, paddingHorizontal: 20, paddingTop: 0 },
-  privacyUpdated: { color: '#8A96A5', fontSize: 10, marginTop: 10, textAlign: 'center' },
-  privacyPolicyLink: { backgroundColor: '#F2F7F3', borderColor: '#D7E8DC', borderRadius: 14, borderWidth: 1, marginTop: 14, padding: 14 },
-  privacyPolicyLinkTitle: { color: '#0C6B45', fontSize: 14, fontWeight: '800' },
-  infoSection: { backgroundColor: '#FFFFFF', borderRadius: 18, marginTop: 18, padding: 16 },
-  infoSectionTitle: { color: '#132442', fontSize: 17, fontWeight: '900' },
-  infoParagraph: { borderTopColor: '#EEEAE2', borderTopWidth: StyleSheet.hairlineWidth, marginTop: 14, paddingTop: 14 },
-  infoParagraphTitle: { color: '#273952', fontSize: 13, fontWeight: '800' },
-  infoParagraphBody: { color: '#617085', fontSize: 12, lineHeight: 20, marginTop: 5 },
-  colorPalette: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginBottom: 8, marginTop: 20 },
-  colorOption: { alignItems: 'center', borderColor: 'transparent', borderRadius: 25, borderWidth: 3, height: 50, justifyContent: 'center', width: 50 },
-  colorOptionSelected: { borderColor: '#132442' },
-  colorCheck: { color: '#132442', fontSize: 20, fontWeight: '900' },
+  privacyUpdated: {
+    color: "#8A96A5",
+    fontSize: 10,
+    marginTop: 10,
+    textAlign: "center",
+  },
+  privacyPolicyLink: {
+    backgroundColor: "#F2F7F3",
+    borderColor: "#D7E8DC",
+    borderRadius: 14,
+    borderWidth: 1,
+    marginTop: 14,
+    padding: 14,
+  },
+  privacyPolicyLinkTitle: { color: "#0C6B45", fontSize: 14, fontWeight: "800" },
+  infoSection: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    marginTop: 18,
+    padding: 16,
+  },
+  infoSectionTitle: { color: "#132442", fontSize: 17, fontWeight: "900" },
+  infoParagraph: {
+    borderTopColor: "#EEEAE2",
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 14,
+    paddingTop: 14,
+  },
+  infoParagraphTitle: { color: "#273952", fontSize: 13, fontWeight: "800" },
+  infoParagraphBody: {
+    color: "#617085",
+    fontSize: 12,
+    lineHeight: 20,
+    marginTop: 5,
+  },
+  colorPalette: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 14,
+    marginBottom: 8,
+    marginTop: 20,
+  },
+  colorOption: {
+    alignItems: "center",
+    borderColor: "transparent",
+    borderRadius: 25,
+    borderWidth: 3,
+    height: 50,
+    justifyContent: "center",
+    width: 50,
+  },
+  colorOptionSelected: { borderColor: "#132442" },
+  colorCheck: { color: "#132442", fontSize: 20, fontWeight: "900" },
 });

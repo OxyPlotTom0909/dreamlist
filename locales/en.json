@@ -1,0 +1,9 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Aimmora",
+    "NSPhotoLibraryUsageDescription": "Allow Aimmora to access your photos so you can choose profile and dream images."
+  },
+  "android": {
+    "app_name": "Aimmora"
+  }
+}
