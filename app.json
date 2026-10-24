@@ -12,12 +12,20 @@
       "backgroundColor": "#004F38"
     },
     "ios": {
+      "bundleIdentifier": "com.kuolunghuang.aimmora",
+      "buildNumber": "95",
       "supportsTablet": true,
       "infoPlist": {
-        "CFBundleAllowMixedLocalizations": true
+        "CFBundleAllowMixedLocalizations": true,
+        "CFBundleLocalizations": [
+          "en",
+          "zh-Hant"
+        ]
       }
     },
     "android": {
+      "package": "com.kuolunghuang.aimmora",
+      "versionCode": 95,
       "adaptiveIcon": {
         "backgroundColor": "#004F38",
         "foregroundImage": "./assets/aimmora-android-foreground.png"
@@ -49,8 +57,14 @@
         "expo-localization",
         {
           "supportedLocales": {
-            "ios": ["en", "zh-Hant"],
-            "android": ["en", "zh-Hant"]
+            "ios": [
+              "en",
+              "zh-Hant"
+            ],
+            "android": [
+              "en",
+              "zh-Hant"
+            ]
           }
         }
       ]
@@ -58,6 +72,12 @@
     "locales": {
       "en": "./locales/en.json",
       "zh-Hant": "./locales/zh-Hant.json"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5c8ce6ae-f6df-4548-9f5f-ff5433620bda"
+      }
+    },
+    "owner": "tom19760909"
   }
 }
