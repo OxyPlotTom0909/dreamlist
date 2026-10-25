@@ -137,7 +137,7 @@ const english: Readonly<Record<string, string>> = {
   收入詳細內容: "Income details",
   收入類別: "Income categories",
   "收入／支出分類": "Income / expense category",
-  收支日曆: "Income & expense calendar",
+  收支日曆: "Income calendar",
   收藏每一個已經執行的夢想: "A collection of every dream you completed",
   新增: "Add",
   新增夢想: "Add dream",
