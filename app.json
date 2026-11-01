@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.kuolunghuang.aimmora",
-      "versionCode": 95,
+      "versionCode": 96,
       "adaptiveIcon": {
         "backgroundColor": "#004F38",
         "foregroundImage": "./assets/aimmora-android-foreground.png"
